@@ -2,6 +2,7 @@
 ## takes as input a folder with a csv file that must contain at least one descriptive column with 2 or more groups to compare and other numeric columns. 
 ## all output files will be saved in the main folder under a results folder of your choice. 
 
+gc()
 ##run these lines  
 perform_statistical_analysis <- function() {
   #directory to default
@@ -1138,11 +1139,29 @@ perform_statistical_analysis <- function() {
     for (i in seq_along(unique_groups)) {
       cat(i, ": ", unique_groups[i], "\n")
     }
-    group_indices <- as.numeric(strsplit(readline(prompt="Enter the indices of 2 groups to test, separated by a comma: "), ",")[[1]])
-    chosen_groups <- unique_groups[group_indices]
-    return(chosen_groups)
+    group_input <- readline(prompt="Enter the indices of 2 groups to test (comma-separated) or type 'done' to exit: ")
+    
+    if (tolower(group_input) == "done") {
+      return(NULL)  # Signal to exit
+    }
+    
+    group_indices <- as.numeric(strsplit(group_input, ",")[[1]])
+    
+    if (length(group_indices) == 2 && all(group_indices %in% seq_along(unique_groups))) {
+      return(unique_groups[group_indices])
+    } else {
+      cat("\033[1;31mInvalid selection. Please enter two valid indices.\033[0m\n")
+    }
   }
+
+# Loop for multiple 2-group comparisons
+repeat {
   chosen_groups <- choose_groups(data, index_col)
+  if (is.null(chosen_groups)) {
+    cat("\033[1;32mExiting two-group comparisons. Moving to the next analysis step...\033[0m\n")
+    break
+  }
+  
   #sub-data based on chosen groups
   sub_data <- data %>% filter(!!sym(index_col) %in% chosen_groups)
   sub_data_dir <- file.path(output_dir, paste("sub_data_", paste(chosen_groups, collapse = "_"), sep = ""))
@@ -2120,6 +2139,7 @@ perform_statistical_analysis <- function() {
   cat("\033[1;32m==== combination feature logistics regression analysis completed, moving on...  ====\033[0m\n")
   
   cli_alert_success(" two group statistical testing handled successfully!")
+}
   cat("\033[1;31m==== Analysis completed, review files and run again as needed:)  ====\033[0m\n")
   cat("\033[1;31m==== IMPORTANT! PLEASE REMOVE YOUR FILES FROM THE DIRECTORY ====\033[0m\n")
 }
