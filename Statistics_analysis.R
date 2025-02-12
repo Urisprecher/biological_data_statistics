@@ -2,7 +2,7 @@
 ## takes as input a folder with a csv file that must contain at least one descriptive column with 2 or more groups to compare and other numeric columns. 
 ## all output files will be saved in the main folder under a results folder of your choice. 
 
-gc()
+
 ##run these lines  
 perform_statistical_analysis <- function() {
   #directory to default
@@ -14,7 +14,7 @@ perform_statistical_analysis <- function() {
   required_packages <- c("ggplot2", "dplyr", "pwr", "tidyr", "tibble", "broom",
                          "purrr", "MASS", "caret", "Metrics", "combinat",
                          "devtools", "FSA", "dabestr", "AICcmodavg", "cli",
-                         "BayesFactor", "car", "nnet", "pROC", "parallel", "future", "furrr")
+                         "BayesFactor", "car", "nnet", "pROC", "parallel", "future", "furrr", "corrplot", "mixOmics")
   for (pkg in required_packages) {
     if (!require(pkg, character.only = TRUE)) {
       install.packages(pkg, dependencies = TRUE)
@@ -82,6 +82,33 @@ perform_statistical_analysis <- function() {
     data <- data[, !(names(data) %in% columns_to_remove_pre)]
     write.csv(data, file.path(output_dir, "data_columns_removal.csv"), row.names = FALSE)
   }
+
+  perform_correlation_analysis <- function(data, output_folder) {
+    if (!dir.exists(output_folder)) {
+      dir.create(output_folder, recursive = TRUE)
+    }
+    
+    numeric_data <- data[, sapply(data, is.numeric), drop = TRUE]
+    numeric_data <- scale(numeric_data)
+    #handle NAs
+    correlation_matrix <- cor(numeric_data, use = "pairwise.complete.obs", method = "pearson")
+    #save correlation matrix 
+    write.csv(correlation_matrix, file.path(output_folder, "correlation_matrix.csv"), row.names = TRUE)
+    #plot heatmap using corrplot
+    png(file.path(output_folder, "correlation_heatmap.png"), width = 800, height = 800)
+    corrplot(correlation_matrix, method = "pie", type = "upper", order="hclust", addCoef.col = "black",
+             col = colorRampPalette(c("blue", "white", "red"))(200),
+             tl.col = "black", tl.srt = 45)
+    dev.off()
+    list(correlation_matrix = correlation_matrix)
+  }
+  plot_folder_cor <- file.path(dirname(all_stat_dir), "correlation_data")
+  if (!dir.exists(plot_folder_cor)) {
+    dir.create(plot_folder_cor)
+  }
+  message("generating correlation data...")
+  cor_frame <- as.data.frame(data)
+  perform_correlation_analysis(data = cor_frame, output_folder = plot_folder_cor)
   
   ###linear regression analysis
   linear_reg_res_dir <- file.path(all_stat_dir, "stat_linear_regression")
@@ -539,6 +566,29 @@ perform_statistical_analysis <- function() {
   numeric_data <- data[, sapply(data, is.numeric)]
   data <- cbind(data[[index_col]], numeric_data)
   colnames(data)[1] <- index_col
+  norm_function <- function(data, index_col) {
+    tryCatch({
+      original_data <- data
+      apply_norm <- readline(prompt = "Do you want to normalize your data? (yes/no): ")
+      if (tolower(apply_norm) == "yes") {
+        cat("Normalizing data using CLR.\n")
+        feature_data <- data[, !(names(data) %in% index_col)]
+        data <- logratio.transfo(feature_data, logratio = 'CLR')
+      }
+      else {
+        cat("No normalization performed.\n")
+        return(original_data)
+      }
+      return(data)
+    }, error = function(e) {
+      cat("\033[1;31mAn error occurred during normalization:\033[0m", e$message, "\n")
+      cat("Returning original data and skipping this step.\n")
+      return(original_data)
+    })
+  }
+  data <- norm_function(data, index_col)
+  write.csv(data, file.path(output_dir, "post_norm_data.csv"), row.names = FALSE)
+  cat("\033[1;32m==== normalization step completed, moving on... ====\033[0m\n")
   cli_alert_success("Data processing complete. Proceeding to statistical analysis.")
   cat("\033[1;31m==== Step 2 - multi group testing began... ====\033[0m\n")
   ## outlier segment 
@@ -1153,993 +1203,993 @@ perform_statistical_analysis <- function() {
       cat("\033[1;31mInvalid selection. Please enter two valid indices.\033[0m\n")
     }
   }
-
-# Loop for multiple 2-group comparisons
-repeat {
-  chosen_groups <- choose_groups(data, index_col)
-  if (is.null(chosen_groups)) {
-    cat("\033[1;32mExiting two-group comparisons. Moving to the next analysis step...\033[0m\n")
-    break
-  }
   
-  #sub-data based on chosen groups
-  sub_data <- data %>% filter(!!sym(index_col) %in% chosen_groups)
-  sub_data_dir <- file.path(output_dir, paste("sub_data_", paste(chosen_groups, collapse = "_"), sep = ""))
-  dir.create(sub_data_dir, showWarnings = FALSE)
-  write.csv(sub_data, file.path(sub_data_dir, "sub_data.csv"), row.names = FALSE)
-  cat("\033[1;32m==== groups chosen succesfully, moving on.... ====\033[0m\n")
-  ## DABSETR BOOT PLOTS per 2 groups
-  boot_dat_two <- sub_data
-  all_groups <- unique(boot_dat_two[[index_col]])
-  
-  perform_boot_two <- readline(prompt = "Would you like to run bootstrapping analysis tests on two groups present in the index column? (yes/no): ")
-  if (tolower(perform_boot_two) == "yes") {
+  # Loop for multiple 2-group comparisons
+  repeat {
+    chosen_groups <- choose_groups(data, index_col)
+    if (is.null(chosen_groups)) {
+      cat("\033[1;32mExiting two-group comparisons. Moving to the next analysis step...\033[0m\n")
+      break
+    }
     
-    #plot bootstrap confidence intervals
-    plot_bootstrap_ci <- function(boot_dat_two, index_col, output_dir) {
-      ci_plot_dir <- file.path(sub_data_dir, "boot_ci_plots")
-      dir.create(ci_plot_dir, showWarnings = FALSE)
+    #sub-data based on chosen groups
+    sub_data <- data %>% filter(!!sym(index_col) %in% chosen_groups)
+    sub_data_dir <- file.path(output_dir, paste("sub_data_", paste(chosen_groups, collapse = "_"), sep = ""))
+    dir.create(sub_data_dir, showWarnings = FALSE)
+    write.csv(sub_data, file.path(sub_data_dir, "sub_data.csv"), row.names = FALSE)
+    cat("\033[1;32m==== groups chosen succesfully, moving on.... ====\033[0m\n")
+    ## DABSETR BOOT PLOTS per 2 groups
+    boot_dat_two <- sub_data
+    all_groups <- unique(boot_dat_two[[index_col]])
+    
+    perform_boot_two <- readline(prompt = "Would you like to run bootstrapping analysis tests on two groups present in the index column? (yes/no): ")
+    if (tolower(perform_boot_two) == "yes") {
       
-      for (feature in colnames(boot_dat_two)[-1]) {
-        #safeguard against NA values in the current feature
-        feature_data <- boot_dat_two[!is.na(boot_dat_two[[feature]]), ]
-        if (nrow(feature_data) == 0) {
-          cat(sprintf("Skipping feature '%s' as it contains only NA values.\n", feature))
-          next
-        }
+      #plot bootstrap confidence intervals
+      plot_bootstrap_ci <- function(boot_dat_two, index_col, output_dir) {
+        ci_plot_dir <- file.path(sub_data_dir, "boot_ci_plots")
+        dir.create(ci_plot_dir, showWarnings = FALSE)
         
-        tryCatch({
-          #compute bootstrap confidence intervals
-          dabest_data <- load(data = feature_data, x = !!sym(index_col), y = !!sym(feature), idx = chosen_groups)
-          dabest_data_diff <- mean_diff(dabest_data)
-          
-          #create and save the plot
-          ci_plot <- dabest_plot(dabest_data_diff, rawplot.type = "swarmplot")
-          ci_plot_path <- file.path(ci_plot_dir, paste("boot_ci_plot_", gsub(" ", "_", feature), ".png", sep = ""))
-          ggsave(ci_plot_path, plot = ci_plot, width = 8, height = 6)
-          ci_plot_path_2 <- file.path(ci_plot_dir, paste("boot_ci_plot_", gsub(" ", "_", feature), ".pdf", sep = ""))
-          ggsave(ci_plot_path_2, plot = ci_plot, width = 8, height = 6, device = "pdf")
-          cat(sprintf("Saved bootstrap CI plot for feature '%s' at '%s'\n", feature, ci_plot_path))
-        }, error = function(e) {
-          cat(sprintf("Error generating bootstrap plot for feature '%s': %s\n", feature, e$message))
-          error_log_path <- file.path(ci_plot_dir, "bootstrap_error_log.txt")
-          write(sprintf("Feature: %s | Error: %s\n", feature, e$message), file = error_log_path, append = TRUE)
-        })
-      }
-    }
-    
-    #RUN
-    plot_bootstrap_ci(boot_dat_all, index_col, output_dir)
-  }
-  
-  stats_info_dir <- file.path(sub_data_dir, "stats_info")
-  dir.create(stats_info_dir, showWarnings = FALSE)
-  cat("\033[1;32m==== Performed bootstrap analysis on 2 chosen groups succesfully, moving on.... ====\033[0m\n")
-  #levene for equal variance 
-  print("Testing for equal variance among chosen groups")
-  perform_variance_testing <- function(data, index_col, chosen_groups) {
-    variance_results <- data.frame(feature = character(), p_value = numeric(), stringsAsFactors = FALSE)
-    #validate chosen_groups
-    if (length(chosen_groups) < 2) {
-      stop("Error: At least two groups are required for variance testing.")
-    }
-    sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
-    
-    for (feature in colnames(data)[-1]) {
-      formula <- as.formula(paste(feature, "~", index_col))
-      
-      tryCatch({
-        #Levene test to assess equal variance
-        levene_test_result <- leveneTest(formula, data = sub_data_filtered)
-        variance_results <- rbind(variance_results,
-                                  data.frame(feature = feature,
-                                             p_value = levene_test_result$`Pr(>F)`[1]))
-        cat("Levene's test for", feature, "completed successfully.\n")
-        
-      }, error = function(e) {
-        cat("Error in Levene's test for feature", feature, ":", e$message, "\n")
-      })
-    }
-    
-    return(variance_results)
-  }
-  variance_results <- perform_variance_testing(data, index_col, chosen_groups)
-  
-  #variance test results if they exist
-  if (nrow(variance_results) > 0) {
-    variance_results_path <- file.path(stats_info_dir, "variance_test_results.csv")
-    write.csv(variance_results, variance_results_path, row.names = FALSE)
-    cat("Variance test results saved to:", variance_results_path, "\n")
-  } else {
-    cat("No variance test results to save; check input data or group selection.\n")
-  }
-  
-  #shapiro-wilk normality test 
-  print("Testing for normality among chosen groups")
-  
-  perform_normality_testing <- function(data, index_col, chosen_groups) {
-    normality_results <- data.frame(feature = character(), p_value_group1 = numeric(), p_value_group2 = numeric(), stringsAsFactors = FALSE)
-    
-    #ensure exactly two groups for pairwise comparison
-    if (length(chosen_groups) != 2) {
-      stop("Error: Normality testing requires exactly two groups.")
-    }
-    
-    sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
-    
-    for (feature in colnames(data)[-1]) {
-      tryCatch({
-        #shapiro-wilk test 
-        group1_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[1], feature]
-        group2_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[2], feature]
-        
-        if (length(group1_data) < 3 || length(group2_data) < 3) {
-          cat("Insufficient data for normality test on feature:", feature, "\n")
-          next
-        }
-        
-        shapiro_group1 <- shapiro.test(group1_data)
-        shapiro_group2 <- shapiro.test(group2_data)
-        
-        normality_results <- rbind(normality_results,
-                                   data.frame(feature = feature,
-                                              p_value_group1 = shapiro_group1$p.value,
-                                              p_value_group2 = shapiro_group2$p.value))
-        cat("Shapiro-Wilk test for", feature, "completed successfully.\n")
-        
-      }, error = function(e) {
-        cat("Error in Shapiro-Wilk test for feature", feature, ":", e$message, "\n")
-      })
-    }
-    
-    return(normality_results)
-  }
-  
-  normality_results <- perform_normality_testing(data, index_col, chosen_groups)
-  
-  #normality test results if they exist
-  if (nrow(normality_results) > 0) {
-    normality_results_path <- file.path(stats_info_dir, "normality_test_results.csv")
-    write.csv(normality_results, normality_results_path, row.names = FALSE)
-    cat("Normality test results saved to:", normality_results_path, "\n")
-  } else {
-    cat("No normality test results to save; check input data or group selection.\n")
-  }
-  
-  cat("\033[1;32m==== Performed variance and normality analysis on 2 chosen groups succesfully, moving on.... ====\033[0m\n")
-  stat_test_dir <- file.path(sub_data_dir, "stat_test")
-  dir.create(stat_test_dir, showWarnings = FALSE)
-  #2 group stat test t-test, wilcoxon test or Mann-Whitney U test
-  perform_statistical_testing <- function(data, index_col, chosen_groups) {
-    #user to choose of the test options
-    cat("Choose the test to perform based on normality results:\n")
-    cat("1: t-test (assuming normality)\n")
-    cat("2: Wilcoxon test (non-parametric, not assuming normality)\n")
-    cat("3: Mann-Whitney U test (non-parametric, compares medians)\n")
-    test_choice <- as.numeric(readline(prompt="Enter the number of the chosen test: "))
-    
-    #validate test selection
-    if (!test_choice %in% c(1, 2, 3)) {
-      stop("Invalid choice for the test. Please enter 1, 2, or 3.")
-    }
-    #index column is treated as a factor and subset to the two chosen groups
-    data[[index_col]] <- factor(data[[index_col]], levels = chosen_groups)
-    sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
-    #filtered data has exactly two groups
-    if (nlevels(sub_data_filtered[[index_col]]) != 2) {
-      stop("The selected index column must have exactly two groups for this test.")
-    }
-    
-    #results data frame
-    test_results <- data.frame(feature = character(), p_value = numeric(), stringsAsFactors = FALSE)
-    
-    for (feature in colnames(data)[-1]) {
-      cat("Processing feature:", feature, "\n")
-      
-      #group data
-      group1_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[1], feature]
-      group2_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[2], feature]
-      
-      #is data sufficient for testing
-      if (length(group1_data) < 2 || length(group2_data) < 2) {
-        cat("Skipping feature due to insufficient data in one or both groups.\n")
-        next
-      }
-      
-      tryCatch({
-        if (test_choice == 1) {
-          # in case of T - Levene test on the filtered subset for equal variances
-          levene_test <- car::leveneTest(as.formula(paste(feature, "~", index_col)), data = sub_data_filtered)
-          
-          if (levene_test$`Pr(>F)`[1] < 0.05) {
-            cat("Variances are unequal; performing Welch's t-test for", feature, "\n")
-            test_result <- t.test(group1_data, group2_data, var.equal = FALSE)  # Welch's t-test
-          } else {
-            cat("Variances are equal; performing regular t-test for", feature, "\n")
-            test_result <- t.test(group1_data, group2_data, var.equal = TRUE)  # Regular t-test
-          }
-          
-        } else if (test_choice == 2) {
-          # Wilcoxon test
-          cat("Performing Wilcoxon test for", feature, "\n")
-          test_result <- wilcox.test(group1_data, group2_data)
-          
-        } else if (test_choice == 3) {
-          # Mann-Whitney U test
-          cat("Performing Mann-Whitney U test for", feature, "\n")
-          test_result <- wilcox.test(group1_data, group2_data, exact = FALSE)  # Mann-Whitney
-          
-        }
-        
-        #result to data frame
-        test_results <- rbind(test_results, data.frame(feature = feature, p_value = test_result$p.value))
-        
-      }, warning = function(w) {
-        cat("Warning for feature", feature, ":", conditionMessage(w), "\n")
-      }, error = function(e) {
-        cat("Error in statistical testing for feature", feature, ":", conditionMessage(e), "\n")
-      })
-    }
-    #check if results were obtained
-    if (nrow(test_results) == 0) {
-      warning("No test results were generated. Verify data and chosen groups.")
-    } else {
-      cat("Statistical testing completed successfully.\n")
-    }
-    
-    return(test_results)
-  }
-  
-  #RUN
-  test_results <- perform_statistical_testing(data, index_col, chosen_groups)
-  cat("\033[1;32m==== Performed 2 group statistical test succesfully, moving on.... ====\033[0m\n")
-  #apply FDR correction on p vals?
-  tryCatch({
-    apply_fdr <- as.logical(readline(prompt="Do you want to apply FDR correction to the p-values? (TRUE/FALSE): "))
-    
-    if (apply_fdr) {
-      test_results$p_value_adj <- p.adjust(test_results$p_value, method = "fdr")
-      p_value_histogram <- ggplot(test_results, aes(x = p_value_adj)) +
-        geom_histogram(binwidth = 0.05, fill = "blue", color = "black") +
-        labs(title = "Histogram of P-values-adj", x = "P-value-adj", y = "Frequency")
-      
-      histogram_path <- file.path(stat_test_dir, "p_value_adj_histogram.png")
-      ggsave(histogram_path, plot = p_value_histogram, width = 8, height = 6)
-      print("fdr applied- see adj p value histogram in results directory")
-      
-    }})
-  
-  #save statistical test results
-  if (nrow(test_results) > 0) {
-    test_results_path <- file.path(stat_test_dir, "statistical_test_results.csv")
-    write.csv(test_results, test_results_path, row.names = FALSE)
-    cat("2 group test results saved to:", test_results_path, "\n")
-  } else {
-    cat("No 2 group test results to save; check input data or group selection.\n")
-  }
-  
-  #histogram of p-values
-  tryCatch({
-    p_value_histogram <- ggplot(test_results, aes(x = p_value)) +
-      geom_histogram(binwidth = 0.05, fill = "blue", color = "black") +
-      labs(title = "Histogram of P-values", x = "P-value", y = "Frequency")
-    histogram_path <- file.path(stat_test_dir, "p_value_histogram.png")
-    ggsave(histogram_path, plot = p_value_histogram, width = 8, height = 6)
-    print("2 group statistical test applied- see  p value histogram in results directory")
-  })
-  cat("\033[1;32m==== 2 group statistical test, FDR, and p value hostograms completed, moving on.... ====\033[0m\n")
-  summary_dir <- file.path(sub_data_dir, "stat_summary")
-  dir.create(summary_dir, showWarnings = FALSE)
-  #summarize DF 
-  summarize_dataframe <- function(df, index_col) {
-    # Validate input data
-    if (!index_col %in% names(df)) {
-      stop("Error: index_col does not exist in the DataFrame.")
-    }
-    summary_df <- data.frame(
-      column_name = character(),
-      mean = numeric(),
-      variance = numeric(),
-      num_samples = integer(),
-      group_means = numeric(),
-      group_variances = numeric(),
-      group_num_samples = integer(),
-      total_mean = numeric(),
-      total_variance = numeric(),
-      total_num_samples = integer(),
-      calculated_effect_size = numeric(),
-      S = numeric(),
-      stringsAsFactors = FALSE
-    )
-    
-    #summary statistics
-    for (col_name in names(df)) {
-      if (col_name != index_col) {
-        tryCatch({
-          #mean, variance, and number of samples for column
-          col_mean <- mean(df[[col_name]], na.rm = TRUE)
-          col_var <- var(df[[col_name]], na.rm = TRUE)
-          col_num_samples <- sum(!is.na(df[[col_name]]))
-          
-          #mean, variance, and number of samples for groups
-          group_means <- tapply(df[[col_name]], df[[index_col]], mean, na.rm = TRUE)
-          group_variances <- tapply(df[[col_name]], df[[index_col]], var, na.rm = TRUE)
-          group_num_samples <- tapply(df[[col_name]], df[[index_col]], function(x) sum(!is.na(x)))
-          
-          #two groups for comparison
-          if (length(group_means) < 2) {
-            warning(paste("Column", col_name, "does not have at least two groups. Skipping..."))
+        for (feature in colnames(boot_dat_two)[-1]) {
+          #safeguard against NA values in the current feature
+          feature_data <- boot_dat_two[!is.na(boot_dat_two[[feature]]), ]
+          if (nrow(feature_data) == 0) {
+            cat(sprintf("Skipping feature '%s' as it contains only NA values.\n", feature))
             next
           }
           
-          #effect size and S value
-          mean_dif <- group_means[1] - group_means[2]
-          s_value <- sqrt(
-            ((group_num_samples[1] - 1) * group_variances[1] +
-               (group_num_samples[2] - 1) * group_variances[2]) /
-              (col_num_samples - 2)
-          )
-          
-          #CIs
-          v_value <- ((group_num_samples[1] - 1) * group_variances[1] +
-                        (group_num_samples[2] - 1) * group_variances[2]) /
-            (col_num_samples - 2)
-          marg <- qt(0.975, df = col_num_samples - 1) * sqrt(v_value / group_num_samples[1] + v_value / group_num_samples[2])
-          low_int <- mean_dif - marg
-          up_int <- mean_dif + marg
-          
-          #append to summary DF
-          summary_col <- data.frame(
-            column_name = col_name,
-            mean = col_mean,
-            variance = col_var,
-            num_samples = col_num_samples,
-            group_means = group_means,
-            group_variances = group_variances,
-            group_num_samples = group_num_samples,
-            total_mean = col_mean,
-            total_variance = col_var,
-            total_num_samples = col_num_samples,
-            calculated_effect_size = abs(mean_dif) / s_value,
-            S = s_value,
-            V = v_value,
-            mean_dif = mean_dif,
-            marg = marg,
-            low_int = low_int,
-            up_int = up_int,
-            group_sd = sqrt(group_variances)
-          )
-          
-          summary_df <- rbind(summary_df, summary_col)
-          
-        }, error = function(e) {
-          message(paste("Error in column", col_name, ":", e$message))
-        })
-      }
-    }
-    return(summary_df)
-  }
-  
-  #RUN
-  summary_df <- summarize_dataframe(sub_data, index_col)
-  
-  #save summary DF
-  summary_df_path <- file.path(summary_dir, "summary_data.csv")
-  tryCatch({
-    write.csv(summary_df, summary_df_path, row.names = FALSE)
-    message("Summary data saved successfully at ", summary_df_path)
-  }, error = function(e) {
-    message("Failed to save summary data: ", e$message)
-  })
-  
-  #plot CIs
-  two_row_ci_plot <- function(df, path) {
-    plot_list <- list()
-    n <- nrow(df)
-    
-    for (i in seq(1, n, by = 2)) {
-      tryCatch({
-        df_small <- df[i, ]
-        up_int <- df_small$up_int
-        low_int <- df_small$low_int
-        effect_size <- df_small$mean_dif
-        column_name <- df_small$column_name[1]
-        
-        plot <- ggplot(df_small, aes(x = 1, y = effect_size)) +
-          geom_point(aes(y = mean_dif), shape = 21, colour = "black", fill = "white", size = 5, stroke = 5) +
-          geom_errorbar(aes(ymin = low_int, ymax = up_int), width = 0.2) +
-          geom_hline(yintercept = effect_size, linetype = "dotted") +
-          labs(title = column_name) +
-          theme_minimal()
-        
-        plot_list[[i]] <- plot
-        
-      }, error = function(e) {
-        message("Error generating plot for row ", i, ": ", e$message)
-      })
-    }
-    
-    #save each plot and close open devices
-    for (i in seq_along(plot_list)) {
-      tryCatch({
-        ggsave(paste0(path, "/plot_", i, ".png"), plot_list[[i]], width = 8, height = 6)
-        if (length(dev.list()) > 10) {
-          while (!is.null(dev.list())) dev.off()
+          tryCatch({
+            #compute bootstrap confidence intervals
+            dabest_data <- load(data = feature_data, x = !!sym(index_col), y = !!sym(feature), idx = chosen_groups)
+            dabest_data_diff <- mean_diff(dabest_data)
+            
+            #create and save the plot
+            ci_plot <- dabest_plot(dabest_data_diff, rawplot.type = "swarmplot")
+            ci_plot_path <- file.path(ci_plot_dir, paste("boot_ci_plot_", gsub(" ", "_", feature), ".png", sep = ""))
+            ggsave(ci_plot_path, plot = ci_plot, width = 8, height = 6)
+            ci_plot_path_2 <- file.path(ci_plot_dir, paste("boot_ci_plot_", gsub(" ", "_", feature), ".pdf", sep = ""))
+            ggsave(ci_plot_path_2, plot = ci_plot, width = 8, height = 6, device = "pdf")
+            cat(sprintf("Saved bootstrap CI plot for feature '%s' at '%s'\n", feature, ci_plot_path))
+          }, error = function(e) {
+            cat(sprintf("Error generating bootstrap plot for feature '%s': %s\n", feature, e$message))
+            error_log_path <- file.path(ci_plot_dir, "bootstrap_error_log.txt")
+            write(sprintf("Feature: %s | Error: %s\n", feature, e$message), file = error_log_path, append = TRUE)
+          })
         }
-      }, error = function(e) {
-        message("Error saving plot ", i, ": ", e$message)
-      })
-    }
-  }
-  
-  # RUN
-  ci_plot_dir <- file.path(summary_dir, "ci_plots")
-  dir.create(ci_plot_dir, showWarnings = FALSE)
-  two_row_ci_plot(summary_df, ci_plot_dir)
-  cat("\033[1;32m==== 2 group statistical summary & Cohen's CI plots completed, moving on.... ====\033[0m\n")
-  #function to add power calculations to the summary data frame
-  add_power_to_df <- function(df) {
-    n1 <- as.numeric(readline(prompt="Enter the value for n1: "))
-    n2 <- as.numeric(readline(prompt="Enter the value for n2: "))
-    sig.level <- as.numeric(readline(prompt="Enter the significance level: "))
-    
-    power_vals <- rep(NA, nrow(df))
-    
-    #run on each row and compute the power using pwr.t2n.test
-    for (i in 1:nrow(df)) {
-      d <- df$calculated_effect_size[i]
-      power <- pwr.t2n.test(n1 = n1, n2 = n2, d = d, sig.level = sig.level)$power
-      power_vals[i] <- power
-    }
-    
-    df$power <- power_vals
-    
-    return(df)
-  }
-  
-  summary_df_with_power <- add_power_to_df(summary_df)
-  
-  #save summary data frame with power calculations
-  summary_df_with_power_path <- file.path(summary_dir, "summary_data_with_power.csv")
-  write.csv(as.data.frame(summary_df_with_power), summary_df_with_power_path)
-  cat("\033[1;32m==== power analysis completed and saved, moving on.... ====\033[0m\n")
-  bayes_dir <- file.path(sub_data_dir, "stat_bayes")
-  dir.create(bayes_dir, showWarnings = FALSE)
-  ## Bayes factor addition
-  perform_bayes_factor_analysis <- function(data, index_col, chosen_groups) {
-    split_dataframe <- function(df) {
-      index_col <- names(df)[1]
-      df_col_names <- names(df)[-1]
-      split_df_list <- list()
-      for (col_name in df_col_names) {
-        feat_df <- df[!is.na(df[[col_name]]), ]
-        new_df <- feat_df[c(index_col, col_name)]
-        split_df_list[[col_name]] <- new_df
-      }
-      return(split_df_list)
-    }
-    
-    split_dfs <- split_dataframe(data)
-    
-    ttest_bf <- function(df) {
-      group1 <- df[[2]][df[[1]] == chosen_groups[1]]
-      group2 <- df[[2]][df[[1]] == chosen_groups[2]]
-      result <- ttestBF(x = group1, y = group2, rscale = "medium")
-      return(result)
-    }
-    
-    bayes_results <- data.frame(feature = character(), bayes_factor = numeric(), stringsAsFactors = FALSE)
-    error_log <- list()
-    
-    for (df_name in names(split_dfs)) {
-      tryCatch({
-        res <- ttest_bf(split_dfs[[df_name]])
-        res_df <- as.data.frame(res)
-        bayes_results <- rbind(bayes_results, data.frame(feature = df_name, bayes_factor = res_df$bf[1]))
-      }, error = function(e) {
-        warning(paste("Error processing feature:", df_name, "-", conditionMessage(e)))
-        error_log[[df_name]] <- conditionMessage(e)
-      })
-    }
-    
-    # Log errors
-    if (length(error_log) > 0) {
-      error_log_path <- file.path(bayes_dir, "bayes_factor_errors.log")
-      writeLines(paste(names(error_log), unlist(error_log), sep = ": "), con = error_log_path)
-      cat("Errors logged for Bayes factor analysis.\n")
-    }
-    
-    return(bayes_results)
-  }
-  
-  #prep Bayes factor analysis
-  bayes_dat <- data
-  tryCatch({
-    bayes_results <- perform_bayes_factor_analysis(bayes_dat, index_col, chosen_groups)
-    #Bayes factor results
-    bayes_results_path <- file.path(bayes_dir, "bayes_factor_results.csv")
-    write.csv(bayes_results, bayes_results_path, row.names = FALSE)
-    cat("\033[1;32m==== Bayes factor analysis completed and saved, moving on.... ====\033[0m\n")
-  }, error = function(e) {
-    stop("Critical error in Bayes factor analysis: ", conditionMessage(e))
-  })
-  #permutation testing 
-  perform_permutation_testing <- function(data, index_col, chosen_groups, num_permutations) {
-    perm_test_results <- data.frame(feature = character(), p_value = numeric(), stringsAsFactors = FALSE)
-    
-    #validate chosen_groups
-    if (length(chosen_groups) != 2) {
-      stop("Error: Permutation testing requires exactly two groups.")
-    }
-    
-    #filter data 
-    sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
-    
-    for (feature in colnames(data)[-1]) {
-      tryCatch({
-        group1_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[1], feature]
-        group2_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[2], feature]
-        
-        #data is sufficient 
-        if (length(group1_data) < 3 || length(group2_data) < 3) {
-          cat("Insufficient data for permutation test on feature:", feature, "\n")
-          next
-        }
-        
-        original_diff <- abs(mean(group1_data) - mean(group2_data))
-        
-        #permutation testing
-        perm_diffs <- numeric(num_permutations)
-        combined_data <- c(group1_data, group2_data)
-        
-        for (i in 1:num_permutations) {
-          permuted_data <- sample(combined_data)
-          perm_group1 <- permuted_data[1:length(group1_data)]
-          perm_group2 <- permuted_data[(length(group1_data) + 1):length(permuted_data)]
-          perm_diffs[i] <- abs(mean(perm_group1) - mean(perm_group2))
-        }
-        
-        perm_p_value <- mean(perm_diffs >= original_diff)
-        perm_test_results <- rbind(perm_test_results, data.frame(feature = feature, p_value = perm_p_value))
-        
-        cat("Permutation test for", feature, "completed successfully.\n")
-        
-      }, error = function(e) {
-        cat("Error in permutation test for feature", feature, ":", e$message, "\n")
-      })
-    }
-    
-    return(perm_test_results)
-  }
-  
-  #input for permutation testing
-  perform_permutations <- as.logical(tolower(readline(prompt="Do you want to perform permutation tests? (TRUE/FALSE): ")))
-  
-  if (perform_permutations) {
-    num_permutations <- as.numeric(readline(prompt="Enter the number of permutations (e.g., 500, 1000, or 10000): "))
-    
-    # num_permutations
-    if (is.na(num_permutations) || num_permutations <= 0) {
-      stop("Error: Number of permutations must be a positive integer.")
-    }
-    
-    #RUN
-    perm_test_results <- perform_permutation_testing(data, index_col, chosen_groups, num_permutations)
-    
-    if (nrow(perm_test_results) > 0) {
-      perm_test_results_path <- file.path(stat_test_dir, "permutation_test_results.csv")
-      write.csv(perm_test_results, perm_test_results_path, row.names = FALSE)
-      cat("Permutation test results saved to:", perm_test_results_path, "\n")
-    } else {
-      cat("No permutation test results to save; check input data or group selection.\n")
-    }
-  }
-  cat("\033[1;32m==== Permuations analysis completed and saved, moving on.... ====\033[0m\n")
-  #box plots for sub-data
-  plot_box_plots <- function(data, index_col, output_dir) {
-    boxplot_dir <- file.path(output_dir, "boxplots")
-    dir.create(boxplot_dir, showWarnings = FALSE)
-    
-    for (feature in colnames(data)[-1]) {
-      p <- ggplot(data, aes_string(x=index_col, y=feature)) +
-        geom_boxplot(aes(fill = !!sym(index_col))) +
-        geom_jitter(width = 0.2, size = 0.5) +
-        labs(title = paste("Box Plot for", feature), x = index_col, y = feature) +
-        theme(axis.text.x = element_text(size = 8)) +
-        scale_fill_brewer(palette = "Set3")
-      
-      boxplot_path <- file.path(boxplot_dir, paste("boxplot_", gsub(" ", "_", feature), ".png", sep=""))
-      ggsave(boxplot_path, plot = p, width = 8, height = 6)
-      boxplot_path_2 <- file.path(boxplot_dir, paste("boxplot_", gsub(" ", "_", feature), ".pdf", sep=""))
-      ggsave(boxplot_path_2, plot = p, width = 8, height = 6, device = "pdf")
-    }}
-  plot_box_plots(sub_data, index_col, sub_data_dir)
-  cat("\033[1;32m==== Box plots for two groups completed and saved, moving on.... ====\033[0m\n")
-  cat("\033[1;32m==== Moving to Regression analysis... ====\033[0m\n")
-  cat("\033[1;31m==== Highly recommended to inspect correlations between features prior...  ====\033[0m\n")
-  log_reg_res_dir <- file.path(sub_data_dir, "stat_log_regression")
-  dir.create(log_reg_res_dir, showWarnings = FALSE)
-  #prompt user to run simple logistic regression
-  run_simple_logistic <- as.logical(tolower(readline(prompt="Do you want to run per feature logistic regression analysis? (TRUE/FALSE): ")))
-  
-  if (run_simple_logistic) {
-    
-    perform_simple_logistic_analysis <- function(data, index_col, chosen_groups) {
-      # validate chosen groups
-      if (length(chosen_groups) != 2) {
-        stop("Error: Logistic regression requires exactly two groups.")
-      }
-      sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
-      
-      #index col in factor form
-      sub_data_filtered[, 1] <- as.factor(sub_data_filtered[, 1])
-      feature_cols <- names(sub_data_filtered)[-1]
-      group_levels <- levels(factor(sub_data_filtered[[index_col]]))
-      group_0 <- group_levels[1]
-      group_1 <- group_levels[2]
-      print(group_levels)
-      model_list <- list()
-      logistic_results <- data.frame(Model = character(), AIC_value = numeric(), p_value = numeric(), AUC = numeric(),
-                                     Odds_Ratio = numeric(),
-                                     Lower_CI = numeric(),
-                                     Upper_CI = numeric(), stringsAsFactors = FALSE)
-      plot_path_glm <- file.path(sub_data_dir, "logistic_reg_plots")
-      if (!dir.exists(plot_path_glm)) {
-        dir.create(plot_path_glm, recursive = TRUE)
       }
       
-      print("Running logistic regression")
-      for (feature in feature_cols) {
-        tryCatch({
-          sub_data_filtered <- sub_data_filtered[!is.na(sub_data_filtered[[feature]]), ]
-          sub_data_filtered[[feature]] <- scale(sub_data_filtered[[feature]])
-          #logistic regression model
-          model <- glm(sub_data_filtered[[1]] ~ sub_data_filtered[[feature]], family = binomial)
-          
-          #model convergence
-          if (!model$converged) {
-            warning(paste("Model for feature", feature, "did not converge. Skipping."))
-            next
-          }
-          #model to list
-          model_name <- paste0("logistic_model_", feature)
-          model_list[[model_name]] <- model
-          plot_data <- augment(model)
-          plot_data <- as.data.frame(plot_data)
-          y_obs_axis_title <- paste0(" Observed Values (0 = ", group_0, ", 1 = ", group_1, ")")
-          y_pred_axis_title <- paste0("Predicted Values (0 = ", group_0, ", 1 = ", group_1, ")")
-          sub_data_filtered[[1]] <- type.convert(factor(sub_data_filtered[[1]], labels = 0:1), as.is = TRUE)
-          sub_data_filtered$.fitted <- predict(model, type = "response")
-          
-          #AUC-ROC computation & plotting
-          roc_curve <- roc(sub_data_filtered[[1]], fitted(model))
-          auc_value <- auc(roc_curve)
-          roc_plot <- ggroc(roc_curve) +
-            labs(title = paste("ROC Curve for", feature),
-                 x = "False Positive Rate",
-                 y = "True Positive Rate") +
-            theme_minimal()
-          roc_file <- file.path(plot_path_glm, paste0(model_name, "_ROC.png"))
-          ggsave(roc_file, plot = roc_plot, width = 8, height = 6)
-          
-          #observed values with sigmoidal curve plot
-          plot_observed <- ggplot(sub_data_filtered, aes(x = sub_data_filtered[[feature]], y = sub_data_filtered[[1]])) +
-            geom_jitter(color = "red", alpha = 0.6, width = 0.02, height = 0.002) +  
-            stat_smooth(
-              method = "glm",
-              method.args = list(family = "binomial"),
-              color = "green",
-              se = TRUE, fullrange = TRUE, n = 1000, size = 1.5, linetype = "dashed"
-            ) +  
-            xlim(min(sub_data_filtered[[feature]]) - 1, max(sub_data_filtered[[feature]]) + 1) +
-            labs(
-              title = paste("Observed Values vs Feature for", feature),
-              x = feature,
-              y = y_obs_axis_title
-            ) +
-            scale_y_continuous(breaks = c(0, 1), labels = c(group_0, group_1)) +
-            theme_minimal()
-          
-          #predicted probabilities with sigmoidal curve plot
-          plot_predicted <- ggplot(sub_data_filtered, aes_string(x = sub_data_filtered[[feature]], y =  sub_data_filtered[[".fitted"]])) +
-            geom_point(color = "black", alpha = 0.6) +  
-            stat_smooth(
-              method = "glm",
-              method.args = list(family = "binomial"),
-              color = "blue",
-              se = TRUE, fullrange = TRUE, n = 1000, size = 0.5, linetype = "dashed") +
-            xlim(min(sub_data_filtered[[feature]]) - 1, max(sub_data_filtered[[feature]]) + 1) +
-            labs(title = paste("Predicted Probabilities vs Feature for", feature),
-                 x = feature,
-                 y = y_pred_axis_title) +
-            theme_minimal()
-          
-          #saving plots
-          ggsave(file.path(plot_path_glm, paste0("observed_values_", feature, ".png")), plot = plot_observed, width = 8, height = 6)
-          ggsave(file.path(plot_path_glm, paste0("predicted_probabilities_", feature, ".png")), plot = plot_predicted, width = 8, height = 6)
-          
-          #CIs and odds ratios
-          conf_intervals <- confint(model)
-          odds_ratios <- exp(coef(model))
-          odds_ratios_conf <- exp(conf_intervals)
-          
-          #model summary 
-          summary_model <- summary(model)
-          summary_row <- data.frame(Model = model_name,
-                                    AIC_value = AIC(model),
-                                    p_value = coef(summary_model)[2, "Pr(>|z|)"],
-                                    AUC = auc_value,
-                                    Odds_Ratio = odds_ratios[2],
-                                    Lower_CI = odds_ratios_conf[2, 1],
-                                    Upper_CI = odds_ratios_conf[2, 2])
-          logistic_results <- rbind(logistic_results, summary_row)
-          
-        }, error = function(e) {
-          cat("Error in logistic regression for feature", feature, ":", e$message, "\n")
-        })
-      }
-      
-      return(list(logistic_results = logistic_results, model_list = model_list))
+      #RUN
+      plot_bootstrap_ci(boot_dat_all, index_col, output_dir)
     }
     
-    #logistic regression and results
-    simple_logistic_analysis <- perform_simple_logistic_analysis(data, index_col, chosen_groups)
-    simple_logistic_results <- simple_logistic_analysis$logistic_results
-    
-    #save simple logistic regression results
-    logistic_results_path <- file.path(log_reg_res_dir, "simple_logistic_results.csv")
-    write.csv(simple_logistic_results, logistic_results_path, row.names = FALSE)
-    print("Simple logistic regression results saved.")
-    
-    #sort by AIC and select top 10 models
-    top_10_aic_models <- simple_logistic_results %>% arrange(AIC_value) %>% head(10)
-    
-    #plot top 10 models by AIC, with lower AIC values at the top
-    plot_path_aic <- file.path(log_reg_res_dir, "top_logistic_aic_models.png")
-    ggplot(top_10_aic_models, aes(x = reorder(Model, AIC_value), y = AIC_value)) +
-      geom_bar(stat = "identity", fill = "steelblue") +
-      coord_flip() +
-      labs(title = "Top Logistic Regression Models by AIC",
-           x = "Model",
-           y = "AIC") +
-      theme_minimal() +
-      scale_y_reverse() + 
-      theme(axis.text.x = element_text(size = 8), axis.text.y = element_text(size = 8))
-    
-    ggsave(plot_path_aic, width = 8, height = 6)
-    while (!is.null(dev.list())) dev.off()
-  }
-  cat("\033[1;32m==== per feature logistics regression analysis completed, moving on...  ====\033[0m\n")
-  #user to run combination logistic regression
-  run_combination_logistic <- as.logical(tolower(readline(prompt="Do you want to run the combination logistic regression analysis? (TRUE/FALSE): ")))
-  
-  if (run_combination_logistic) {
-    
-    perform_combination_logistic_analysis <- function(data, index_col, chosen_groups) {
+    stats_info_dir <- file.path(sub_data_dir, "stats_info")
+    dir.create(stats_info_dir, showWarnings = FALSE)
+    cat("\033[1;32m==== Performed bootstrap analysis on 2 chosen groups succesfully, moving on.... ====\033[0m\n")
+    #levene for equal variance 
+    print("Testing for equal variance among chosen groups")
+    perform_variance_testing <- function(data, index_col, chosen_groups) {
+      variance_results <- data.frame(feature = character(), p_value = numeric(), stringsAsFactors = FALSE)
       #validate chosen_groups
+      if (length(chosen_groups) < 2) {
+        stop("Error: At least two groups are required for variance testing.")
+      }
+      sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
+      
+      for (feature in colnames(data)[-1]) {
+        formula <- as.formula(paste(feature, "~", index_col))
+        
+        tryCatch({
+          #Levene test to assess equal variance
+          levene_test_result <- leveneTest(formula, data = sub_data_filtered)
+          variance_results <- rbind(variance_results,
+                                    data.frame(feature = feature,
+                                               p_value = levene_test_result$`Pr(>F)`[1]))
+          cat("Levene's test for", feature, "completed successfully.\n")
+          
+        }, error = function(e) {
+          cat("Error in Levene's test for feature", feature, ":", e$message, "\n")
+        })
+      }
+      
+      return(variance_results)
+    }
+    variance_results <- perform_variance_testing(data, index_col, chosen_groups)
+    
+    #variance test results if they exist
+    if (nrow(variance_results) > 0) {
+      variance_results_path <- file.path(stats_info_dir, "variance_test_results.csv")
+      write.csv(variance_results, variance_results_path, row.names = FALSE)
+      cat("Variance test results saved to:", variance_results_path, "\n")
+    } else {
+      cat("No variance test results to save; check input data or group selection.\n")
+    }
+    
+    #shapiro-wilk normality test 
+    print("Testing for normality among chosen groups")
+    
+    perform_normality_testing <- function(data, index_col, chosen_groups) {
+      normality_results <- data.frame(feature = character(), p_value_group1 = numeric(), p_value_group2 = numeric(), stringsAsFactors = FALSE)
+      
+      #ensure exactly two groups for pairwise comparison
       if (length(chosen_groups) != 2) {
-        stop("Error: Combination logistic regression requires exactly two groups.")
+        stop("Error: Normality testing requires exactly two groups.")
       }
       
       sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
-      sub_data_filtered[[index_col]] <- as.factor(sub_data_filtered[[index_col]])
-      feature_cols <- names(sub_data_filtered)[-1]
       
-      #parallel processing
-      plan(multisession, workers = availableCores() - 2)
+      for (feature in colnames(data)[-1]) {
+        tryCatch({
+          #shapiro-wilk test 
+          group1_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[1], feature]
+          group2_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[2], feature]
+          
+          if (length(group1_data) < 3 || length(group2_data) < 3) {
+            cat("Insufficient data for normality test on feature:", feature, "\n")
+            next
+          }
+          
+          shapiro_group1 <- shapiro.test(group1_data)
+          shapiro_group2 <- shapiro.test(group2_data)
+          
+          normality_results <- rbind(normality_results,
+                                     data.frame(feature = feature,
+                                                p_value_group1 = shapiro_group1$p.value,
+                                                p_value_group2 = shapiro_group2$p.value))
+          cat("Shapiro-Wilk test for", feature, "completed successfully.\n")
+          
+        }, error = function(e) {
+          cat("Error in Shapiro-Wilk test for feature", feature, ":", e$message, "\n")
+        })
+      }
       
-      #logistic results storage
-      logistic_results <- data.frame(
-        Model = character(),
-        AIC_value = numeric(),
-        p_value = numeric(),
-        AUC = numeric(),
-        Odds_Ratio = numeric(),
-        Lower_CI = numeric(),
-        Upper_CI = numeric(),
+      return(normality_results)
+    }
+    
+    normality_results <- perform_normality_testing(data, index_col, chosen_groups)
+    
+    #normality test results if they exist
+    if (nrow(normality_results) > 0) {
+      normality_results_path <- file.path(stats_info_dir, "normality_test_results.csv")
+      write.csv(normality_results, normality_results_path, row.names = FALSE)
+      cat("Normality test results saved to:", normality_results_path, "\n")
+    } else {
+      cat("No normality test results to save; check input data or group selection.\n")
+    }
+    
+    cat("\033[1;32m==== Performed variance and normality analysis on 2 chosen groups succesfully, moving on.... ====\033[0m\n")
+    stat_test_dir <- file.path(sub_data_dir, "stat_test")
+    dir.create(stat_test_dir, showWarnings = FALSE)
+    #2 group stat test t-test, wilcoxon test or Mann-Whitney U test
+    perform_statistical_testing <- function(data, index_col, chosen_groups) {
+      #user to choose of the test options
+      cat("Choose the test to perform based on normality results:\n")
+      cat("1: t-test (assuming normality)\n")
+      cat("2: Wilcoxon test (non-parametric, not assuming normality)\n")
+      cat("3: Mann-Whitney U test (non-parametric, compares medians)\n")
+      test_choice <- as.numeric(readline(prompt="Enter the number of the chosen test: "))
+      
+      #validate test selection
+      if (!test_choice %in% c(1, 2, 3)) {
+        stop("Invalid choice for the test. Please enter 1, 2, or 3.")
+      }
+      #index column is treated as a factor and subset to the two chosen groups
+      data[[index_col]] <- factor(data[[index_col]], levels = chosen_groups)
+      sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
+      #filtered data has exactly two groups
+      if (nlevels(sub_data_filtered[[index_col]]) != 2) {
+        stop("The selected index column must have exactly two groups for this test.")
+      }
+      
+      #results data frame
+      test_results <- data.frame(feature = character(), p_value = numeric(), stringsAsFactors = FALSE)
+      
+      for (feature in colnames(data)[-1]) {
+        cat("Processing feature:", feature, "\n")
+        
+        #group data
+        group1_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[1], feature]
+        group2_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[2], feature]
+        
+        #is data sufficient for testing
+        if (length(group1_data) < 2 || length(group2_data) < 2) {
+          cat("Skipping feature due to insufficient data in one or both groups.\n")
+          next
+        }
+        
+        tryCatch({
+          if (test_choice == 1) {
+            # in case of T - Levene test on the filtered subset for equal variances
+            levene_test <- car::leveneTest(as.formula(paste(feature, "~", index_col)), data = sub_data_filtered)
+            
+            if (levene_test$`Pr(>F)`[1] < 0.05) {
+              cat("Variances are unequal; performing Welch's t-test for", feature, "\n")
+              test_result <- t.test(group1_data, group2_data, var.equal = FALSE)  # Welch's t-test
+            } else {
+              cat("Variances are equal; performing regular t-test for", feature, "\n")
+              test_result <- t.test(group1_data, group2_data, var.equal = TRUE)  # Regular t-test
+            }
+            
+          } else if (test_choice == 2) {
+            # Wilcoxon test
+            cat("Performing Wilcoxon test for", feature, "\n")
+            test_result <- wilcox.test(group1_data, group2_data)
+            
+          } else if (test_choice == 3) {
+            # Mann-Whitney U test
+            cat("Performing Mann-Whitney U test for", feature, "\n")
+            test_result <- wilcox.test(group1_data, group2_data, exact = FALSE)  # Mann-Whitney
+            
+          }
+          
+          #result to data frame
+          test_results <- rbind(test_results, data.frame(feature = feature, p_value = test_result$p.value))
+          
+        }, warning = function(w) {
+          cat("Warning for feature", feature, ":", conditionMessage(w), "\n")
+        }, error = function(e) {
+          cat("Error in statistical testing for feature", feature, ":", conditionMessage(e), "\n")
+        })
+      }
+      #check if results were obtained
+      if (nrow(test_results) == 0) {
+        warning("No test results were generated. Verify data and chosen groups.")
+      } else {
+        cat("Statistical testing completed successfully.\n")
+      }
+      
+      return(test_results)
+    }
+    
+    #RUN
+    test_results <- perform_statistical_testing(data, index_col, chosen_groups)
+    cat("\033[1;32m==== Performed 2 group statistical test succesfully, moving on.... ====\033[0m\n")
+    #apply FDR correction on p vals?
+    tryCatch({
+      apply_fdr <- as.logical(readline(prompt="Do you want to apply FDR correction to the p-values? (TRUE/FALSE): "))
+      
+      if (apply_fdr) {
+        test_results$p_value_adj <- p.adjust(test_results$p_value, method = "fdr")
+        p_value_histogram <- ggplot(test_results, aes(x = p_value_adj)) +
+          geom_histogram(binwidth = 0.05, fill = "blue", color = "black") +
+          labs(title = "Histogram of P-values-adj", x = "P-value-adj", y = "Frequency")
+        
+        histogram_path <- file.path(stat_test_dir, "p_value_adj_histogram.png")
+        ggsave(histogram_path, plot = p_value_histogram, width = 8, height = 6)
+        print("fdr applied- see adj p value histogram in results directory")
+        
+      }})
+    
+    #save statistical test results
+    if (nrow(test_results) > 0) {
+      test_results_path <- file.path(stat_test_dir, "statistical_test_results.csv")
+      write.csv(test_results, test_results_path, row.names = FALSE)
+      cat("2 group test results saved to:", test_results_path, "\n")
+    } else {
+      cat("No 2 group test results to save; check input data or group selection.\n")
+    }
+    
+    #histogram of p-values
+    tryCatch({
+      p_value_histogram <- ggplot(test_results, aes(x = p_value)) +
+        geom_histogram(binwidth = 0.05, fill = "blue", color = "black") +
+        labs(title = "Histogram of P-values", x = "P-value", y = "Frequency")
+      histogram_path <- file.path(stat_test_dir, "p_value_histogram.png")
+      ggsave(histogram_path, plot = p_value_histogram, width = 8, height = 6)
+      print("2 group statistical test applied- see  p value histogram in results directory")
+    })
+    cat("\033[1;32m==== 2 group statistical test, FDR, and p value hostograms completed, moving on.... ====\033[0m\n")
+    summary_dir <- file.path(sub_data_dir, "stat_summary")
+    dir.create(summary_dir, showWarnings = FALSE)
+    #summarize DF 
+    summarize_dataframe <- function(df, index_col) {
+      # Validate input data
+      if (!index_col %in% names(df)) {
+        stop("Error: index_col does not exist in the DataFrame.")
+      }
+      summary_df <- data.frame(
+        column_name = character(),
+        mean = numeric(),
+        variance = numeric(),
+        num_samples = integer(),
+        group_means = numeric(),
+        group_variances = numeric(),
+        group_num_samples = integer(),
+        total_mean = numeric(),
+        total_variance = numeric(),
+        total_num_samples = integer(),
+        calculated_effect_size = numeric(),
+        S = numeric(),
         stringsAsFactors = FALSE
       )
       
-      # plots dir
-      plot_path_glm <- file.path(sub_data_dir, "log_reg_comb_plots")
-      if (!dir.exists(plot_path_glm)) {
-        dir.create(plot_path_glm, recursive = TRUE)
-      }
-      print("Running combination logistic regression")
-      
-      chunk_size <- 100  #adjust if needed
-      
-      feature_combinations <- unlist(
-        lapply(2:length(feature_cols), function(i) combn(feature_cols, i, simplify = FALSE)),
-        recursive = FALSE
-      )
-      
-      #combinations into chunks
-      combination_chunks <- split(feature_combinations, ceiling(seq_along(feature_combinations) / chunk_size))
-      
-      process_chunk <- function(chunk) {
-        results <- lapply(chunk, function(combo) {
+      #summary statistics
+      for (col_name in names(df)) {
+        if (col_name != index_col) {
           tryCatch({
-            combo_string <- paste(combo, collapse = "+")
-            formula <- as.formula(paste(index_col, "~", combo_string))
+            #mean, variance, and number of samples for column
+            col_mean <- mean(df[[col_name]], na.rm = TRUE)
+            col_var <- var(df[[col_name]], na.rm = TRUE)
+            col_num_samples <- sum(!is.na(df[[col_name]]))
             
-            #rows with NA in selected features drop
-            select_cols <- c(index_col, combo)
-            complete_cases <- sub_data_filtered[complete.cases(sub_data_filtered[, select_cols]), select_cols]
-            complete_cases[combo] <- scale(complete_cases[combo])
-            if (nrow(complete_cases) == 0) {
-              warning(paste("No cases for combination:", combo_string))
-              return(NULL)
+            #mean, variance, and number of samples for groups
+            group_means <- tapply(df[[col_name]], df[[index_col]], mean, na.rm = TRUE)
+            group_variances <- tapply(df[[col_name]], df[[index_col]], var, na.rm = TRUE)
+            group_num_samples <- tapply(df[[col_name]], df[[index_col]], function(x) sum(!is.na(x)))
+            
+            #two groups for comparison
+            if (length(group_means) < 2) {
+              warning(paste("Column", col_name, "does not have at least two groups. Skipping..."))
+              next
             }
             
-            #model
-            model <- glm(formula, data = complete_cases, family = binomial)
+            #effect size and S value
+            mean_dif <- group_means[1] - group_means[2]
+            s_value <- sqrt(
+              ((group_num_samples[1] - 1) * group_variances[1] +
+                 (group_num_samples[2] - 1) * group_variances[2]) /
+                (col_num_samples - 2)
+            )
+            
+            #CIs
+            v_value <- ((group_num_samples[1] - 1) * group_variances[1] +
+                          (group_num_samples[2] - 1) * group_variances[2]) /
+              (col_num_samples - 2)
+            marg <- qt(0.975, df = col_num_samples - 1) * sqrt(v_value / group_num_samples[1] + v_value / group_num_samples[2])
+            low_int <- mean_dif - marg
+            up_int <- mean_dif + marg
+            
+            #append to summary DF
+            summary_col <- data.frame(
+              column_name = col_name,
+              mean = col_mean,
+              variance = col_var,
+              num_samples = col_num_samples,
+              group_means = group_means,
+              group_variances = group_variances,
+              group_num_samples = group_num_samples,
+              total_mean = col_mean,
+              total_variance = col_var,
+              total_num_samples = col_num_samples,
+              calculated_effect_size = abs(mean_dif) / s_value,
+              S = s_value,
+              V = v_value,
+              mean_dif = mean_dif,
+              marg = marg,
+              low_int = low_int,
+              up_int = up_int,
+              group_sd = sqrt(group_variances)
+            )
+            
+            summary_df <- rbind(summary_df, summary_col)
+            
+          }, error = function(e) {
+            message(paste("Error in column", col_name, ":", e$message))
+          })
+        }
+      }
+      return(summary_df)
+    }
+    
+    #RUN
+    summary_df <- summarize_dataframe(sub_data, index_col)
+    
+    #save summary DF
+    summary_df_path <- file.path(summary_dir, "summary_data.csv")
+    tryCatch({
+      write.csv(summary_df, summary_df_path, row.names = FALSE)
+      message("Summary data saved successfully at ", summary_df_path)
+    }, error = function(e) {
+      message("Failed to save summary data: ", e$message)
+    })
+    
+    #plot CIs
+    two_row_ci_plot <- function(df, path) {
+      plot_list <- list()
+      n <- nrow(df)
+      
+      for (i in seq(1, n, by = 2)) {
+        tryCatch({
+          df_small <- df[i, ]
+          up_int <- df_small$up_int
+          low_int <- df_small$low_int
+          effect_size <- df_small$mean_dif
+          column_name <- df_small$column_name[1]
+          
+          plot <- ggplot(df_small, aes(x = 1, y = effect_size)) +
+            geom_point(aes(y = mean_dif), shape = 21, colour = "black", fill = "white", size = 5, stroke = 5) +
+            geom_errorbar(aes(ymin = low_int, ymax = up_int), width = 0.2) +
+            geom_hline(yintercept = effect_size, linetype = "dotted") +
+            labs(title = column_name) +
+            theme_minimal()
+          
+          plot_list[[i]] <- plot
+          
+        }, error = function(e) {
+          message("Error generating plot for row ", i, ": ", e$message)
+        })
+      }
+      
+      #save each plot and close open devices
+      for (i in seq_along(plot_list)) {
+        tryCatch({
+          ggsave(paste0(path, "/plot_", i, ".png"), plot_list[[i]], width = 8, height = 6)
+          if (length(dev.list()) > 10) {
+            while (!is.null(dev.list())) dev.off()
+          }
+        }, error = function(e) {
+          message("Error saving plot ", i, ": ", e$message)
+        })
+      }
+    }
+    
+    # RUN
+    ci_plot_dir <- file.path(summary_dir, "ci_plots")
+    dir.create(ci_plot_dir, showWarnings = FALSE)
+    two_row_ci_plot(summary_df, ci_plot_dir)
+    cat("\033[1;32m==== 2 group statistical summary & Cohen's CI plots completed, moving on.... ====\033[0m\n")
+    #function to add power calculations to the summary data frame
+    add_power_to_df <- function(df) {
+      n1 <- as.numeric(readline(prompt="Enter the value for n1: "))
+      n2 <- as.numeric(readline(prompt="Enter the value for n2: "))
+      sig.level <- as.numeric(readline(prompt="Enter the significance level: "))
+      
+      power_vals <- rep(NA, nrow(df))
+      
+      #run on each row and compute the power using pwr.t2n.test
+      for (i in 1:nrow(df)) {
+        d <- df$calculated_effect_size[i]
+        power <- pwr.t2n.test(n1 = n1, n2 = n2, d = d, sig.level = sig.level)$power
+        power_vals[i] <- power
+      }
+      
+      df$power <- power_vals
+      
+      return(df)
+    }
+    
+    summary_df_with_power <- add_power_to_df(summary_df)
+    
+    #save summary data frame with power calculations
+    summary_df_with_power_path <- file.path(summary_dir, "summary_data_with_power.csv")
+    write.csv(as.data.frame(summary_df_with_power), summary_df_with_power_path)
+    cat("\033[1;32m==== power analysis completed and saved, moving on.... ====\033[0m\n")
+    bayes_dir <- file.path(sub_data_dir, "stat_bayes")
+    dir.create(bayes_dir, showWarnings = FALSE)
+    ## Bayes factor addition
+    perform_bayes_factor_analysis <- function(data, index_col, chosen_groups) {
+      split_dataframe <- function(df) {
+        index_col <- names(df)[1]
+        df_col_names <- names(df)[-1]
+        split_df_list <- list()
+        for (col_name in df_col_names) {
+          feat_df <- df[!is.na(df[[col_name]]), ]
+          new_df <- feat_df[c(index_col, col_name)]
+          split_df_list[[col_name]] <- new_df
+        }
+        return(split_df_list)
+      }
+      
+      split_dfs <- split_dataframe(data)
+      
+      ttest_bf <- function(df) {
+        group1 <- df[[2]][df[[1]] == chosen_groups[1]]
+        group2 <- df[[2]][df[[1]] == chosen_groups[2]]
+        result <- ttestBF(x = group1, y = group2, rscale = "medium")
+        return(result)
+      }
+      
+      bayes_results <- data.frame(feature = character(), bayes_factor = numeric(), stringsAsFactors = FALSE)
+      error_log <- list()
+      
+      for (df_name in names(split_dfs)) {
+        tryCatch({
+          res <- ttest_bf(split_dfs[[df_name]])
+          res_df <- as.data.frame(res)
+          bayes_results <- rbind(bayes_results, data.frame(feature = df_name, bayes_factor = res_df$bf[1]))
+        }, error = function(e) {
+          warning(paste("Error processing feature:", df_name, "-", conditionMessage(e)))
+          error_log[[df_name]] <- conditionMessage(e)
+        })
+      }
+      
+      # Log errors
+      if (length(error_log) > 0) {
+        error_log_path <- file.path(bayes_dir, "bayes_factor_errors.log")
+        writeLines(paste(names(error_log), unlist(error_log), sep = ": "), con = error_log_path)
+        cat("Errors logged for Bayes factor analysis.\n")
+      }
+      
+      return(bayes_results)
+    }
+    
+    #prep Bayes factor analysis
+    bayes_dat <- data
+    tryCatch({
+      bayes_results <- perform_bayes_factor_analysis(bayes_dat, index_col, chosen_groups)
+      #Bayes factor results
+      bayes_results_path <- file.path(bayes_dir, "bayes_factor_results.csv")
+      write.csv(bayes_results, bayes_results_path, row.names = FALSE)
+      cat("\033[1;32m==== Bayes factor analysis completed and saved, moving on.... ====\033[0m\n")
+    }, error = function(e) {
+      stop("Critical error in Bayes factor analysis: ", conditionMessage(e))
+    })
+    #permutation testing 
+    perform_permutation_testing <- function(data, index_col, chosen_groups, num_permutations) {
+      perm_test_results <- data.frame(feature = character(), p_value = numeric(), stringsAsFactors = FALSE)
+      
+      #validate chosen_groups
+      if (length(chosen_groups) != 2) {
+        stop("Error: Permutation testing requires exactly two groups.")
+      }
+      
+      #filter data 
+      sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
+      
+      for (feature in colnames(data)[-1]) {
+        tryCatch({
+          group1_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[1], feature]
+          group2_data <- sub_data_filtered[sub_data_filtered[[index_col]] == chosen_groups[2], feature]
+          
+          #data is sufficient 
+          if (length(group1_data) < 3 || length(group2_data) < 3) {
+            cat("Insufficient data for permutation test on feature:", feature, "\n")
+            next
+          }
+          
+          original_diff <- abs(mean(group1_data) - mean(group2_data))
+          
+          #permutation testing
+          perm_diffs <- numeric(num_permutations)
+          combined_data <- c(group1_data, group2_data)
+          
+          for (i in 1:num_permutations) {
+            permuted_data <- sample(combined_data)
+            perm_group1 <- permuted_data[1:length(group1_data)]
+            perm_group2 <- permuted_data[(length(group1_data) + 1):length(permuted_data)]
+            perm_diffs[i] <- abs(mean(perm_group1) - mean(perm_group2))
+          }
+          
+          perm_p_value <- mean(perm_diffs >= original_diff)
+          perm_test_results <- rbind(perm_test_results, data.frame(feature = feature, p_value = perm_p_value))
+          
+          cat("Permutation test for", feature, "completed successfully.\n")
+          
+        }, error = function(e) {
+          cat("Error in permutation test for feature", feature, ":", e$message, "\n")
+        })
+      }
+      
+      return(perm_test_results)
+    }
+    
+    #input for permutation testing
+    perform_permutations <- as.logical(tolower(readline(prompt="Do you want to perform permutation tests? (TRUE/FALSE): ")))
+    
+    if (perform_permutations) {
+      num_permutations <- as.numeric(readline(prompt="Enter the number of permutations (e.g., 500, 1000, or 10000): "))
+      
+      # num_permutations
+      if (is.na(num_permutations) || num_permutations <= 0) {
+        stop("Error: Number of permutations must be a positive integer.")
+      }
+      
+      #RUN
+      perm_test_results <- perform_permutation_testing(data, index_col, chosen_groups, num_permutations)
+      
+      if (nrow(perm_test_results) > 0) {
+        perm_test_results_path <- file.path(stat_test_dir, "permutation_test_results.csv")
+        write.csv(perm_test_results, perm_test_results_path, row.names = FALSE)
+        cat("Permutation test results saved to:", perm_test_results_path, "\n")
+      } else {
+        cat("No permutation test results to save; check input data or group selection.\n")
+      }
+    }
+    cat("\033[1;32m==== Permuations analysis completed and saved, moving on.... ====\033[0m\n")
+    #box plots for sub-data
+    plot_box_plots <- function(data, index_col, output_dir) {
+      boxplot_dir <- file.path(output_dir, "boxplots")
+      dir.create(boxplot_dir, showWarnings = FALSE)
+      
+      for (feature in colnames(data)[-1]) {
+        p <- ggplot(data, aes_string(x=index_col, y=feature)) +
+          geom_boxplot(aes(fill = !!sym(index_col))) +
+          geom_jitter(width = 0.2, size = 0.5) +
+          labs(title = paste("Box Plot for", feature), x = index_col, y = feature) +
+          theme(axis.text.x = element_text(size = 8)) +
+          scale_fill_brewer(palette = "Set3")
+        
+        boxplot_path <- file.path(boxplot_dir, paste("boxplot_", gsub(" ", "_", feature), ".png", sep=""))
+        ggsave(boxplot_path, plot = p, width = 8, height = 6)
+        boxplot_path_2 <- file.path(boxplot_dir, paste("boxplot_", gsub(" ", "_", feature), ".pdf", sep=""))
+        ggsave(boxplot_path_2, plot = p, width = 8, height = 6, device = "pdf")
+      }}
+    plot_box_plots(sub_data, index_col, sub_data_dir)
+    cat("\033[1;32m==== Box plots for two groups completed and saved, moving on.... ====\033[0m\n")
+    cat("\033[1;32m==== Moving to Regression analysis... ====\033[0m\n")
+    cat("\033[1;31m==== Highly recommended to inspect correlations between features prior...  ====\033[0m\n")
+    log_reg_res_dir <- file.path(sub_data_dir, "stat_log_regression")
+    dir.create(log_reg_res_dir, showWarnings = FALSE)
+    #prompt user to run simple logistic regression
+    run_simple_logistic <- as.logical(tolower(readline(prompt="Do you want to run per feature logistic regression analysis? (TRUE/FALSE): ")))
+    
+    if (run_simple_logistic) {
+      
+      perform_simple_logistic_analysis <- function(data, index_col, chosen_groups) {
+        # validate chosen groups
+        if (length(chosen_groups) != 2) {
+          stop("Error: Logistic regression requires exactly two groups.")
+        }
+        sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
+        
+        #index col in factor form
+        sub_data_filtered[, 1] <- as.factor(sub_data_filtered[, 1])
+        feature_cols <- names(sub_data_filtered)[-1]
+        group_levels <- levels(factor(sub_data_filtered[[index_col]]))
+        group_0 <- group_levels[1]
+        group_1 <- group_levels[2]
+        print(group_levels)
+        model_list <- list()
+        logistic_results <- data.frame(Model = character(), AIC_value = numeric(), p_value = numeric(), AUC = numeric(),
+                                       Odds_Ratio = numeric(),
+                                       Lower_CI = numeric(),
+                                       Upper_CI = numeric(), stringsAsFactors = FALSE)
+        plot_path_glm <- file.path(sub_data_dir, "logistic_reg_plots")
+        if (!dir.exists(plot_path_glm)) {
+          dir.create(plot_path_glm, recursive = TRUE)
+        }
+        
+        print("Running logistic regression")
+        for (feature in feature_cols) {
+          tryCatch({
+            sub_data_filtered <- sub_data_filtered[!is.na(sub_data_filtered[[feature]]), ]
+            sub_data_filtered[[feature]] <- scale(sub_data_filtered[[feature]])
+            #logistic regression model
+            model <- glm(sub_data_filtered[[1]] ~ sub_data_filtered[[feature]], family = binomial)
+            
+            #model convergence
             if (!model$converged) {
-              warning(paste("Model for combination", combo_string, "did not converge. Skipping."))
-              return(NULL)
+              warning(paste("Model for feature", feature, "did not converge. Skipping."))
+              next
             }
+            #model to list
+            model_name <- paste0("logistic_model_", feature)
+            model_list[[model_name]] <- model
+            plot_data <- augment(model)
+            plot_data <- as.data.frame(plot_data)
+            y_obs_axis_title <- paste0(" Observed Values (0 = ", group_0, ", 1 = ", group_1, ")")
+            y_pred_axis_title <- paste0("Predicted Values (0 = ", group_0, ", 1 = ", group_1, ")")
+            sub_data_filtered[[1]] <- type.convert(factor(sub_data_filtered[[1]], labels = 0:1), as.is = TRUE)
+            sub_data_filtered$.fitted <- predict(model, type = "response")
             
-            #AIC, p-value, and CIs
+            #AUC-ROC computation & plotting
+            roc_curve <- roc(sub_data_filtered[[1]], fitted(model))
+            auc_value <- auc(roc_curve)
+            roc_plot <- ggroc(roc_curve) +
+              labs(title = paste("ROC Curve for", feature),
+                   x = "False Positive Rate",
+                   y = "True Positive Rate") +
+              theme_minimal()
+            roc_file <- file.path(plot_path_glm, paste0(model_name, "_ROC.png"))
+            ggsave(roc_file, plot = roc_plot, width = 8, height = 6)
+            
+            #observed values with sigmoidal curve plot
+            plot_observed <- ggplot(sub_data_filtered, aes(x = sub_data_filtered[[feature]], y = sub_data_filtered[[1]])) +
+              geom_jitter(color = "red", alpha = 0.6, width = 0.02, height = 0.002) +  
+              stat_smooth(
+                method = "glm",
+                method.args = list(family = "binomial"),
+                color = "green",
+                se = TRUE, fullrange = TRUE, n = 1000, size = 1.5, linetype = "dashed"
+              ) +  
+              xlim(min(sub_data_filtered[[feature]]) - 1, max(sub_data_filtered[[feature]]) + 1) +
+              labs(
+                title = paste("Observed Values vs Feature for", feature),
+                x = feature,
+                y = y_obs_axis_title
+              ) +
+              scale_y_continuous(breaks = c(0, 1), labels = c(group_0, group_1)) +
+              theme_minimal()
+            
+            #predicted probabilities with sigmoidal curve plot
+            plot_predicted <- ggplot(sub_data_filtered, aes_string(x = sub_data_filtered[[feature]], y =  sub_data_filtered[[".fitted"]])) +
+              geom_point(color = "black", alpha = 0.6) +  
+              stat_smooth(
+                method = "glm",
+                method.args = list(family = "binomial"),
+                color = "blue",
+                se = TRUE, fullrange = TRUE, n = 1000, size = 0.5, linetype = "dashed") +
+              xlim(min(sub_data_filtered[[feature]]) - 1, max(sub_data_filtered[[feature]]) + 1) +
+              labs(title = paste("Predicted Probabilities vs Feature for", feature),
+                   x = feature,
+                   y = y_pred_axis_title) +
+              theme_minimal()
+            
+            #saving plots
+            ggsave(file.path(plot_path_glm, paste0("observed_values_", feature, ".png")), plot = plot_observed, width = 8, height = 6)
+            ggsave(file.path(plot_path_glm, paste0("predicted_probabilities_", feature, ".png")), plot = plot_predicted, width = 8, height = 6)
+            
+            #CIs and odds ratios
             conf_intervals <- confint(model)
             odds_ratios <- exp(coef(model))
             odds_ratios_conf <- exp(conf_intervals)
+            
+            #model summary 
             summary_model <- summary(model)
+            summary_row <- data.frame(Model = model_name,
+                                      AIC_value = AIC(model),
+                                      p_value = coef(summary_model)[2, "Pr(>|z|)"],
+                                      AUC = auc_value,
+                                      Odds_Ratio = odds_ratios[2],
+                                      Lower_CI = odds_ratios_conf[2, 1],
+                                      Upper_CI = odds_ratios_conf[2, 2])
+            logistic_results <- rbind(logistic_results, summary_row)
             
-            auc_value <- auc(roc(complete_cases[[index_col]], fitted(model)))
-            
-            list(
-              Model = paste(combo, collapse = " + "),
-              AIC_value = AIC(model),
-              p_value = coef(summary_model)[2, "Pr(>|z|)"],
-              AUC = auc_value,
-              Odds_Ratio = odds_ratios[2],
-              Lower_CI = odds_ratios_conf[2, 1],
-              Upper_CI = odds_ratios_conf[2, 2],
-              Model_Object = model,
-              Complete_Cases = complete_cases
-            )
           }, error = function(e) {
-            message("Error in logistic regression for combination", paste(combo, collapse = ", "), ":", e$message)
-            NULL
+            cat("Error in logistic regression for feature", feature, ":", e$message, "\n")
           })
-        })
-        return(results[!sapply(results, is.null)])
+        }
+        
+        return(list(logistic_results = logistic_results, model_list = model_list))
       }
       
-      all_results <- future_map(combination_chunks, process_chunk) %>% unlist(recursive = FALSE)
+      #logistic regression and results
+      simple_logistic_analysis <- perform_simple_logistic_analysis(data, index_col, chosen_groups)
+      simple_logistic_results <- simple_logistic_analysis$logistic_results
       
-      #sort results
-      tryCatch({
-        logistic_results <- do.call(rbind, lapply(all_results, function(res) {
-          data.frame(
-            Model = res$Model,
-            AIC_value = res$AIC_value,
-            p_value = res$p_value,
-            AUC = res$AUC,
-            Odds_Ratio = res$Odds_Ratio,
-            Lower_CI = res$Lower_CI,
-            Upper_CI = res$Upper_CI
-          )
-        }))
+      #save simple logistic regression results
+      logistic_results_path <- file.path(log_reg_res_dir, "simple_logistic_results.csv")
+      write.csv(simple_logistic_results, logistic_results_path, row.names = FALSE)
+      print("Simple logistic regression results saved.")
+      
+      #sort by AIC and select top 10 models
+      top_10_aic_models <- simple_logistic_results %>% arrange(AIC_value) %>% head(10)
+      
+      #plot top 10 models by AIC, with lower AIC values at the top
+      plot_path_aic <- file.path(log_reg_res_dir, "top_logistic_aic_models.png")
+      ggplot(top_10_aic_models, aes(x = reorder(Model, AIC_value), y = AIC_value)) +
+        geom_bar(stat = "identity", fill = "steelblue") +
+        coord_flip() +
+        labs(title = "Top Logistic Regression Models by AIC",
+             x = "Model",
+             y = "AIC") +
+        theme_minimal() +
+        scale_y_reverse() + 
+        theme(axis.text.x = element_text(size = 8), axis.text.y = element_text(size = 8))
+      
+      ggsave(plot_path_aic, width = 8, height = 6)
+      while (!is.null(dev.list())) dev.off()
+    }
+    cat("\033[1;32m==== per feature logistics regression analysis completed, moving on...  ====\033[0m\n")
+    #user to run combination logistic regression
+    run_combination_logistic <- as.logical(tolower(readline(prompt="Do you want to run the combination logistic regression analysis? (TRUE/FALSE): ")))
+    
+    if (run_combination_logistic) {
+      
+      perform_combination_logistic_analysis <- function(data, index_col, chosen_groups) {
+        #validate chosen_groups
+        if (length(chosen_groups) != 2) {
+          stop("Error: Combination logistic regression requires exactly two groups.")
+        }
         
-        top_50 <- logistic_results %>% arrange(AIC_value, p_value) %>% head(50)
-        #top 50 models to csv
-        logistic_results_path <- file.path(log_reg_res_dir, "combination_logistic_results.csv")
-        write.csv(top_50, logistic_results_path, row.names = FALSE)
-        print("Top 50 Combination logistic regression results saved.")
+        sub_data_filtered <- data %>% filter(!!sym(index_col) %in% chosen_groups)
+        sub_data_filtered[[index_col]] <- as.factor(sub_data_filtered[[index_col]])
+        feature_cols <- names(sub_data_filtered)[-1]
         
-        #top 20 AIC models
-        top_20 <- top_50 %>% head(20)
+        #parallel processing
+        plan(multisession, workers = availableCores() - 2)
         
-        #plot top 10 models by AIC, with lower AIC values at the top
-        plot_path_aic <- file.path(log_reg_res_dir, "top_20_comb_logistic_aic_models.png")
-        top_20_aic_plot <- ggplot(top_20, aes(x = reorder(Model, -AIC_value), y = AIC_value)) +
-          geom_bar(stat = "identity", fill = "steelblue") +
-          coord_flip() +
-          labs(
-            title = "Top Logistic Combination Models by AIC",
-            x = "Model",
-            y = "AIC Value"
-          ) +
-          theme_minimal()+
-          scale_y_reverse() 
-        
-        ggsave(plot_path_aic, plot = top_20_aic_plot, width = 48, height = 26)
-        while (!is.null(dev.list())) dev.off()
-        
-        ##metadata 
-        metadata <- data.frame(
+        #logistic results storage
+        logistic_results <- data.frame(
           Model = character(),
-          Hash = character(),
+          AIC_value = numeric(),
+          p_value = numeric(),
+          AUC = numeric(),
+          Odds_Ratio = numeric(),
+          Lower_CI = numeric(),
+          Upper_CI = numeric(),
           stringsAsFactors = FALSE
         )
         
-        #metadata dir
-        metadata_path <- file.path(plot_path_glm, "model_metadata.csv")
+        # plots dir
+        plot_path_glm <- file.path(sub_data_dir, "log_reg_comb_plots")
+        if (!dir.exists(plot_path_glm)) {
+          dir.create(plot_path_glm, recursive = TRUE)
+        }
+        print("Running combination logistic regression")
         
-        #observed, predicted and roc plots for top 20 models
-        lapply(1:nrow(top_20), function(i) {
-          model_row <- top_20[i, ]
-          model_obj <- all_results[[which(sapply(all_results, function(x) x$Model == model_row$Model))]]$Model_Object
-          complete_cases <- all_results[[which(sapply(all_results, function(x) x$Model == model_row$Model))]]$Complete_Cases
-          group_levels <- levels(factor(complete_cases[[index_col]]))
-          group_0 <- group_levels[1]
-          group_1 <- group_levels[2]
-          print(group_levels)
+        chunk_size <- 100  #adjust if needed
+        
+        feature_combinations <- unlist(
+          lapply(2:length(feature_cols), function(i) combn(feature_cols, i, simplify = FALSE)),
+          recursive = FALSE
+        )
+        
+        #combinations into chunks
+        combination_chunks <- split(feature_combinations, ceiling(seq_along(feature_combinations) / chunk_size))
+        
+        process_chunk <- function(chunk) {
+          results <- lapply(chunk, function(combo) {
+            tryCatch({
+              combo_string <- paste(combo, collapse = "+")
+              formula <- as.formula(paste(index_col, "~", combo_string))
+              
+              #rows with NA in selected features drop
+              select_cols <- c(index_col, combo)
+              complete_cases <- sub_data_filtered[complete.cases(sub_data_filtered[, select_cols]), select_cols]
+              complete_cases[combo] <- scale(complete_cases[combo])
+              if (nrow(complete_cases) == 0) {
+                warning(paste("No cases for combination:", combo_string))
+                return(NULL)
+              }
+              
+              #model
+              model <- glm(formula, data = complete_cases, family = binomial)
+              if (!model$converged) {
+                warning(paste("Model for combination", combo_string, "did not converge. Skipping."))
+                return(NULL)
+              }
+              
+              #AIC, p-value, and CIs
+              conf_intervals <- confint(model)
+              odds_ratios <- exp(coef(model))
+              odds_ratios_conf <- exp(conf_intervals)
+              summary_model <- summary(model)
+              
+              auc_value <- auc(roc(complete_cases[[index_col]], fitted(model)))
+              
+              list(
+                Model = paste(combo, collapse = " + "),
+                AIC_value = AIC(model),
+                p_value = coef(summary_model)[2, "Pr(>|z|)"],
+                AUC = auc_value,
+                Odds_Ratio = odds_ratios[2],
+                Lower_CI = odds_ratios_conf[2, 1],
+                Upper_CI = odds_ratios_conf[2, 2],
+                Model_Object = model,
+                Complete_Cases = complete_cases
+              )
+            }, error = function(e) {
+              message("Error in logistic regression for combination", paste(combo, collapse = ", "), ":", e$message)
+              NULL
+            })
+          })
+          return(results[!sapply(results, is.null)])
+        }
+        
+        all_results <- future_map(combination_chunks, process_chunk) %>% unlist(recursive = FALSE)
+        
+        #sort results
+        tryCatch({
+          logistic_results <- do.call(rbind, lapply(all_results, function(res) {
+            data.frame(
+              Model = res$Model,
+              AIC_value = res$AIC_value,
+              p_value = res$p_value,
+              AUC = res$AUC,
+              Odds_Ratio = res$Odds_Ratio,
+              Lower_CI = res$Lower_CI,
+              Upper_CI = res$Upper_CI
+            )
+          }))
           
-          y_obs_axis_title <- paste0("Observed Values (0 = ", group_0, ", 1 = ", group_1, ")")
-          y_pred_axis_title <- paste0("Predicted Values (0 = ", group_0, ", 1 = ", group_1, ")")
-          complete_cases[[index_col]] <- type.convert(factor(complete_cases[[index_col]], labels = 0:1), as.is = TRUE)
-          complete_cases$.fitted <- predict(model_obj, type = "response")
-
+          top_50 <- logistic_results %>% arrange(AIC_value, p_value) %>% head(50)
+          #top 50 models to csv
+          logistic_results_path <- file.path(log_reg_res_dir, "combination_logistic_results.csv")
+          write.csv(top_50, logistic_results_path, row.names = FALSE)
+          print("Top 50 Combination logistic regression results saved.")
           
-          roc_obj <- roc(complete_cases[[index_col]], predict(all_results[[which(sapply(all_results, function(x) x$Model == model_row$Model))]]$Model_Object, type = "response"))
-          roc_plot <- ggroc(roc_obj) +
-            ggtitle(paste("ROC for Model:", model_row$Model)) +
-            theme_minimal()
+          #top 20 AIC models
+          top_20 <- top_50 %>% head(20)
           
-          
-          plot_observed <- ggplot(complete_cases, aes(x = complete_cases[[2]], y = complete_cases[[index_col]])) +
-            geom_jitter(color = "red", alpha = 0.6, width = 0.02, height = 0.002) +
-            stat_smooth(
-              method = "glm",
-              method.args = list(family = "binomial"),
-              color = "green",
-              se = TRUE, fullrange = TRUE, n = 1000, size = 1.5, linetype = "dashed"
-            ) +
+          #plot top 10 models by AIC, with lower AIC values at the top
+          plot_path_aic <- file.path(log_reg_res_dir, "top_20_comb_logistic_aic_models.png")
+          top_20_aic_plot <- ggplot(top_20, aes(x = reorder(Model, -AIC_value), y = AIC_value)) +
+            geom_bar(stat = "identity", fill = "steelblue") +
+            coord_flip() +
             labs(
-              title = paste("Observed vs Feature for", model_row$Model),
-              x = paste(model_row$Model),
-              y = y_obs_axis_title
+              title = "Top Logistic Combination Models by AIC",
+              x = "Model",
+              y = "AIC Value"
             ) +
-            scale_y_continuous(breaks = c(0, 1), labels = c(group_0, group_1)) +  
-            theme_minimal()
+            theme_minimal()+
+            scale_y_reverse() 
           
+          ggsave(plot_path_aic, plot = top_20_aic_plot, width = 48, height = 26)
+          while (!is.null(dev.list())) dev.off()
           
-          plot_predicted <- ggplot(complete_cases, aes(x = complete_cases[[2]], y = complete_cases$.fitted)) +
-            geom_point(color = "black", alpha = 0.6) +
-            stat_smooth(
-              method = "glm",
-              method.args = list(family = "binomial"),
-              color = "blue",
-              se = TRUE, fullrange = TRUE, n = 1000, size = 0.5, linetype = "dashed"
-            ) +
-            labs(
-              title = paste("Predicted vs Feature for", model_row$Model),
-              x = paste(model_row$Model),
-              y = y_pred_axis_title
-            ) +
-            theme_minimal()
+          ##metadata 
+          metadata <- data.frame(
+            Model = character(),
+            Hash = character(),
+            stringsAsFactors = FALSE
+          )
           
+          #metadata dir
+          metadata_path <- file.path(plot_path_glm, "model_metadata.csv")
           
-          #hash for the models to fix long names 
-          model_hash <- digest::digest(model_row$Model, algo = "crc32")
-          #metadata add
-          metadata <<- rbind(metadata, data.frame(Model = model_row$Model, Hash = model_hash))
-          roc_plot_path <- file.path(plot_path_glm, paste0(model_hash, "_ROC.png"))
-          ggsave(roc_plot_path, plot = roc_plot, width = 16, height = 12)
-          ggsave(file.path(plot_path_glm, paste0("observed_values_", model_hash, ".png")), plot = plot_observed, width = 8, height = 6)
-          ggsave(file.path(plot_path_glm, paste0("predicted_values_", model_hash, ".png")), plot = plot_predicted, width = 8, height = 6)
+          #observed, predicted and roc plots for top 20 models
+          lapply(1:nrow(top_20), function(i) {
+            model_row <- top_20[i, ]
+            model_obj <- all_results[[which(sapply(all_results, function(x) x$Model == model_row$Model))]]$Model_Object
+            complete_cases <- all_results[[which(sapply(all_results, function(x) x$Model == model_row$Model))]]$Complete_Cases
+            group_levels <- levels(factor(complete_cases[[index_col]]))
+            group_0 <- group_levels[1]
+            group_1 <- group_levels[2]
+            print(group_levels)
+            
+            y_obs_axis_title <- paste0("Observed Values (0 = ", group_0, ", 1 = ", group_1, ")")
+            y_pred_axis_title <- paste0("Predicted Values (0 = ", group_0, ", 1 = ", group_1, ")")
+            complete_cases[[index_col]] <- type.convert(factor(complete_cases[[index_col]], labels = 0:1), as.is = TRUE)
+            complete_cases$.fitted <- predict(model_obj, type = "response")
+            
+            
+            roc_obj <- roc(complete_cases[[index_col]], predict(all_results[[which(sapply(all_results, function(x) x$Model == model_row$Model))]]$Model_Object, type = "response"))
+            roc_plot <- ggroc(roc_obj) +
+              ggtitle(paste("ROC for Model:", model_row$Model)) +
+              theme_minimal()
+            
+            
+            plot_observed <- ggplot(complete_cases, aes(x = complete_cases[[2]], y = complete_cases[[index_col]])) +
+              geom_jitter(color = "red", alpha = 0.6, width = 0.02, height = 0.002) +
+              stat_smooth(
+                method = "glm",
+                method.args = list(family = "binomial"),
+                color = "green",
+                se = TRUE, fullrange = TRUE, n = 1000, size = 1.5, linetype = "dashed"
+              ) +
+              labs(
+                title = paste("Observed vs Feature for", model_row$Model),
+                x = paste(model_row$Model),
+                y = y_obs_axis_title
+              ) +
+              scale_y_continuous(breaks = c(0, 1), labels = c(group_0, group_1)) +  
+              theme_minimal()
+            
+            
+            plot_predicted <- ggplot(complete_cases, aes(x = complete_cases[[2]], y = complete_cases$.fitted)) +
+              geom_point(color = "black", alpha = 0.6) +
+              stat_smooth(
+                method = "glm",
+                method.args = list(family = "binomial"),
+                color = "blue",
+                se = TRUE, fullrange = TRUE, n = 1000, size = 0.5, linetype = "dashed"
+              ) +
+              labs(
+                title = paste("Predicted vs Feature for", model_row$Model),
+                x = paste(model_row$Model),
+                y = y_pred_axis_title
+              ) +
+              theme_minimal()
+            
+            
+            #hash for the models to fix long names 
+            model_hash <- digest::digest(model_row$Model, algo = "crc32")
+            #metadata add
+            metadata <<- rbind(metadata, data.frame(Model = model_row$Model, Hash = model_hash))
+            roc_plot_path <- file.path(plot_path_glm, paste0(model_hash, "_ROC.png"))
+            ggsave(roc_plot_path, plot = roc_plot, width = 16, height = 12)
+            ggsave(file.path(plot_path_glm, paste0("observed_values_", model_hash, ".png")), plot = plot_observed, width = 8, height = 6)
+            ggsave(file.path(plot_path_glm, paste0("predicted_values_", model_hash, ".png")), plot = plot_predicted, width = 8, height = 6)
+          })
+        }, error = function(e) {
+          message("Error in logistic plotting for combination: ", e$message)
+          return(NULL)
         })
-      }, error = function(e) {
-        message("Error in logistic plotting for combination: ", e$message)
-        return(NULL)
-      })
-      # metadata to csv
-      write.csv(metadata, metadata_path, row.names = FALSE)
-      print(paste("Model metadata saved to:", metadata_path))
+        # metadata to csv
+        write.csv(metadata, metadata_path, row.names = FALSE)
+        print(paste("Model metadata saved to:", metadata_path))
+        
+        return(logistic_results)
+      }
       
-      return(logistic_results)
+      #RUN combination logistic regression and results
+      combination_logistic_analysis <- perform_combination_logistic_analysis(data, index_col, chosen_groups)
+      
     }
+    cat("\033[1;32m==== combination feature logistics regression analysis completed, moving on...  ====\033[0m\n")
     
-    #RUN combination logistic regression and results
-    combination_logistic_analysis <- perform_combination_logistic_analysis(data, index_col, chosen_groups)
-    
+    cli_alert_success(" two group statistical testing handled successfully!")
   }
-  cat("\033[1;32m==== combination feature logistics regression analysis completed, moving on...  ====\033[0m\n")
-  
-  cli_alert_success(" two group statistical testing handled successfully!")
-}
   cat("\033[1;31m==== Analysis completed, review files and run again as needed:)  ====\033[0m\n")
   cat("\033[1;31m==== IMPORTANT! PLEASE REMOVE YOUR FILES FROM THE DIRECTORY ====\033[0m\n")
 }
