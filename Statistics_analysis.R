@@ -82,7 +82,7 @@ perform_statistical_analysis <- function() {
     data <- data[, !(names(data) %in% columns_to_remove_pre)]
     write.csv(data, file.path(output_dir, "data_columns_removal.csv"), row.names = FALSE)
   }
-
+  
   perform_correlation_analysis <- function(data, output_folder) {
     if (!dir.exists(output_folder)) {
       dir.create(output_folder, recursive = TRUE)
@@ -1458,6 +1458,46 @@ perform_statistical_analysis <- function() {
         print("fdr applied- see adj p value histogram in results directory")
         
       }})
+    bootstrap_pvalue_ci <- function(data, group_var, outcome_var, nboot = 10000) {
+      boot_pvals <- replicate(nboot, {
+        boot_sample <- data[sample(1:nrow(data), replace = TRUE), ]
+        t_res <- t.test(as.formula(paste(outcome_var, "~", group_var)), data = boot_sample)
+        t_res$p.value
+      })
+      ci <- quantile(boot_pvals, c(0.025, 0.975))
+      return(ci)
+    }
+    tryCatch({
+      test_results$CI_lower <- NA
+      test_results$CI_upper <- NA
+      
+      for (i in 1:nrow(test_results)) {
+        feature_name <- test_results$feature[i]
+        ci <- bootstrap_pvalue_ci(data = sub_data, group_var = index_col, outcome_var = feature_name, nboot = 1000)
+        test_results$CI_lower[i] <- ci[1]
+        test_results$CI_upper[i] <- ci[2]
+      }
+    }, error = function(e) {
+      message("Error in bootstrap CI computation: ", e$message)
+    })
+    tryCatch({
+      p_ci <- ggplot(test_results, aes(x = p_value, y = reorder(feature, p_value))) +
+        geom_errorbarh(aes(xmin = CI_lower, xmax = CI_upper), height = 0.2, color = "blue") +
+        geom_point(color = "red", size = 3) +
+        labs(
+          title = "Bootstrap Confidence Intervals for p-values",
+          x = "p-value",
+          y = "Feature"
+        ) +
+        scale_x_continuous(breaks = seq(0, 1, by = 0.05)) +
+        theme_minimal()
+      plot_file_path <- file.path(stat_test_dir, "pvalue_CI_plot.pdf")
+      ggsave(plot_file_path, plot = p_ci, width = 18, height = 16, device = "pdf")
+      
+      message("p-value CI plot saved to: ", plot_file_path)
+    }, error = function(e) {
+      message("Error in plotting bootstrap CI: ", e$message)
+    })
     
     #save statistical test results
     if (nrow(test_results) > 0) {
@@ -1480,6 +1520,7 @@ perform_statistical_analysis <- function() {
     cat("\033[1;32m==== 2 group statistical test, FDR, and p value hostograms completed, moving on.... ====\033[0m\n")
     summary_dir <- file.path(sub_data_dir, "stat_summary")
     dir.create(summary_dir, showWarnings = FALSE)
+    
     #summarize DF 
     summarize_dataframe <- function(df, index_col) {
       # Validate input data
@@ -1576,7 +1617,7 @@ perform_statistical_analysis <- function() {
     #save summary DF
     summary_df_path <- file.path(summary_dir, "summary_data.csv")
     tryCatch({
-      write.csv(summary_df, summary_df_path, row.names = FALSE)
+      write.csv(summary_df, summary_df_path, row.names = TRUE)
       message("Summary data saved successfully at ", summary_df_path)
     }, error = function(e) {
       message("Failed to save summary data: ", e$message)
@@ -1628,30 +1669,87 @@ perform_statistical_analysis <- function() {
     two_row_ci_plot(summary_df, ci_plot_dir)
     cat("\033[1;32m==== 2 group statistical summary & Cohen's CI plots completed, moving on.... ====\033[0m\n")
     #function to add power calculations to the summary data frame
+    compute_effect_size <- function(data, group_var, outcome_var) {
+      group_means <- tapply(data[[outcome_var]], data[[group_var]], mean, na.rm = TRUE)
+      group_vars  <- tapply(data[[outcome_var]], data[[group_var]], var, na.rm = TRUE)
+      group_ns    <- tapply(data[[outcome_var]], data[[group_var]], function(x) sum(!is.na(x)))
+      
+      if(length(group_means) < 2) return(NA)  # Ensure there are two groups
+      
+      mean_diff <- group_means[1] - group_means[2]
+      pooled_sd <- sqrt(((group_ns[1] - 1) * group_vars[1] + (group_ns[2] - 1) * group_vars[2]) / (sum(group_ns) - 2))
+      
+      effect_size <- abs(mean_diff) / pooled_sd
+      return(effect_size)
+    }
+    bootstrap_power_ci <- function(data, group_var, outcome_var, n1, n2, sig.level = sig.level, nboot = 10000) {
+      power_vals <- replicate(nboot, {
+        boot_sample <- data[sample(1:nrow(data), replace = TRUE), ]
+        d <- compute_effect_size(boot_sample, group_var, outcome_var)
+        if (is.na(d)) return(NA)
+        res <- pwr.t2n.test(n1 = n1, n2 = n2, d = d, sig.level = sig.level, alternative = "two.sided")
+        res$power
+      })
+      
+      power_vals <- power_vals[!is.na(power_vals)]
+      ci <- quantile(power_vals, c(0.025, 0.975))
+      return(ci)
+    }
     add_power_to_df <- function(df) {
-      n1 <- as.numeric(readline(prompt="Enter the value for n1: "))
-      n2 <- as.numeric(readline(prompt="Enter the value for n2: "))
-      sig.level <- as.numeric(readline(prompt="Enter the significance level: "))
-      
-      power_vals <- rep(NA, nrow(df))
-      
-      #run on each row and compute the power using pwr.t2n.test
-      for (i in 1:nrow(df)) {
-        d <- df$calculated_effect_size[i]
-        power <- pwr.t2n.test(n1 = n1, n2 = n2, d = d, sig.level = sig.level)$power
-        power_vals[i] <- power
-      }
-      
-      df$power <- power_vals
-      
-      return(df)
+      tryCatch({
+        n1 <- as.numeric(readline(prompt="Enter the value for n1: "))
+        n2 <- as.numeric(readline(prompt="Enter the value for n2: "))
+        sig.level <- as.numeric(readline(prompt="Enter the significance level (e.g., 0.05): "))
+        
+        df <- df %>% distinct(column_name, .keep_all = TRUE)
+        
+        power_vals <- rep(NA, nrow(df))
+        
+        for (i in 1:nrow(df)) {
+          feature_name <- df$column_name[i]
+          d <- df$calculated_effect_size[i]  # the previously computed effect size
+          power_est <- pwr.t2n.test(n1 = n1, n2 = n2, d = d, sig.level = sig.level, alternative = "two.sided")$power
+          power_vals[i] <- power_est
+          print(paste("Power computed for feature", feature_name))
+        }
+        df$power <- power_vals
+        df$Power_CI_lower <- NA
+        df$Power_CI_upper <- NA
+        for (i in 1:nrow(df)) {
+          feature_name <- df$column_name[i]
+          ci <- bootstrap_power_ci(data = sub_data, group_var = index_col, outcome_var = feature_name,
+                                   n1 = n1, n2 = n2, sig.level = sig.level, nboot = 1000)
+          df$Power_CI_lower[i] <- ci[1]
+          df$Power_CI_upper[i] <- ci[2]
+        }
+        return(df)
+      }, error = function(e) {
+        message("Error in add_power_to_df: ", e$message)
+        return(df)  
+      })
     }
     
     summary_df_with_power <- add_power_to_df(summary_df)
+    final_summary <- summary_df_with_power %>%
+      dplyr::select(column_name, power, Power_CI_lower, Power_CI_upper)
+    
+    p_power <- ggplot(final_summary, aes(x = power, y = reorder(column_name, power))) +
+      geom_errorbarh(aes(xmin = Power_CI_lower, xmax = Power_CI_upper), height = 0.2, color = "blue") +
+      geom_point(color = "red", size = 3) +
+      scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+      labs(
+        title = "Bootstrap Confidence Intervals for Power Estimates",
+        x = "Power",
+        y = "Feature"
+      ) +
+      theme_minimal()
+    
+    plot_file_path <- file.path(summary_dir, "power_CI_plot.pdf")
+    ggsave(plot_file_path, plot = p_power, width = 18, height = 16, device = "pdf")
     
     #save summary data frame with power calculations
-    summary_df_with_power_path <- file.path(summary_dir, "summary_data_with_power.csv")
-    write.csv(as.data.frame(summary_df_with_power), summary_df_with_power_path)
+    summary_df_with_power_path <- file.path(summary_dir, "power_data.csv")
+    write.csv(as.data.frame(final_summary), summary_df_with_power_path, row.names = FALSE)
     cat("\033[1;32m==== power analysis completed and saved, moving on.... ====\033[0m\n")
     bayes_dir <- file.path(sub_data_dir, "stat_bayes")
     dir.create(bayes_dir, showWarnings = FALSE)
