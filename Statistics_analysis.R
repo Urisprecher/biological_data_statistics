@@ -82,7 +82,7 @@ perform_statistical_analysis <- function() {
     data <- data[, !(names(data) %in% columns_to_remove_pre)]
     write.csv(data, file.path(output_dir, "data_columns_removal.csv"), row.names = FALSE)
   }
-  
+
   perform_correlation_analysis <- function(data, output_folder) {
     if (!dir.exists(output_folder)) {
       dir.create(output_folder, recursive = TRUE)
@@ -562,7 +562,7 @@ perform_statistical_analysis <- function() {
   } else {
     stop("Index column could not be found in data.")
   }
-  #separate numeric columns, retaining the index column
+  #numeric columns, retaining the index column
   numeric_data <- data[, sapply(data, is.numeric)]
   data <- cbind(data[[index_col]], numeric_data)
   colnames(data)[1] <- index_col
@@ -570,27 +570,45 @@ perform_statistical_analysis <- function() {
     tryCatch({
       original_data <- data
       apply_norm <- readline(prompt = "Do you want to normalize your data? (yes/no): ")
+      
       if (tolower(apply_norm) == "yes") {
         cat("Normalizing data using CLR.\n")
-        feature_data <- data[, !(names(data) %in% index_col)]
-        data <- logratio.transfo(feature_data, logratio = 'CLR')
-      }
-      else {
+        # Separate index and numeric data
+        index_values <- data[[index_col]]
+        feature_data <- data[, !(names(data) %in% index_col), drop = FALSE]
+        
+        # Apply CLR normalization
+        norm_matrix <- logratio.transfo(feature_data, logratio = 'CLR')
+        #df conversion
+        
+        # Re-attach index column
+        norm_matrix <- as.matrix(norm_matrix)
+        #norm_comb <- cbind(index_values, norm_matrix)
+        #norm_df <- as.data.frame(norm_comb)
+        norm_df <- data.frame(index_values, norm_matrix)
+        colnames(norm_df)[1] <- index_col
+        
+        return(norm_df)
+      } else {
         cat("No normalization performed.\n")
         return(original_data)
       }
-      return(data)
     }, error = function(e) {
       cat("\033[1;31mAn error occurred during normalization:\033[0m", e$message, "\n")
       cat("Returning original data and skipping this step.\n")
-      return(original_data)
+      return(data)
     })
   }
+  
+  # Call the normalization function
   data <- norm_function(data, index_col)
+  print(names(data))
+  # Save the result
   write.csv(data, file.path(output_dir, "post_norm_data.csv"), row.names = FALSE)
   cat("\033[1;32m==== normalization step completed, moving on... ====\033[0m\n")
   cli_alert_success("Data processing complete. Proceeding to statistical analysis.")
   cat("\033[1;31m==== Step 2 - multi group testing began... ====\033[0m\n")
+
   ## outlier segment 
   outlier_detection <- function(data, index_col, threshold = 3) {
     tryCatch({
@@ -602,21 +620,17 @@ perform_statistical_analysis <- function() {
         method <- readline(prompt = "Choose the outlier detection method (mad/iqr): ")
         threshold <- as.numeric(readline(prompt = "Enter the threshold for outlier removal (default is 3): "))
         if (is.na(threshold)) threshold <- 3
-        
         outlier_dir <- file.path(output_dir, "outliers_results")
         dir.create(outlier_dir, showWarnings = FALSE)
-        
         feature_data <- data[, !(names(data) %in% index_col)]
         outliers <- data.frame()
         log_summary <- data.frame(Feature = character(), Num_Outliers = numeric(), stringsAsFactors = FALSE)
-        
         mad_outliers <- function(x) {
           mad_val <- mad(x, constant = 1.4826)
           lower_bound <- median(x) - threshold * mad_val
           upper_bound <- median(x) + threshold * mad_val
           which(x < lower_bound | x > upper_bound)
         }
-        
         iqr_outliers <- function(x) {
           iqr_val <- IQR(x, na.rm = TRUE)
           lower_bound <- quantile(x, 0.25, na.rm = TRUE) - threshold * iqr_val
@@ -628,7 +642,6 @@ perform_statistical_analysis <- function() {
                                   "mad" = mad_outliers,
                                   "iqr" = iqr_outliers,
                                   stop("Invalid method chosen. Please choose either 'mad' or 'iqr'."))
-        
         for (feature in colnames(feature_data)) {
           outlier_rows <- detect_outliers(feature_data[[feature]])
           
@@ -643,7 +656,6 @@ perform_statistical_analysis <- function() {
             cat(paste0("Detected ", length(outlier_rows), " outliers in feature '", feature, "'\n"))
           }
         }
-        
         if (nrow(outliers) > 0) {
           write.csv(outliers, file.path(outlier_dir, "removed_outliers.csv"), row.names = TRUE)
           write.csv(log_summary, file.path(outlier_dir, "outlier_summary_log.csv"), row.names = FALSE)
@@ -682,6 +694,7 @@ perform_statistical_analysis <- function() {
   data <- outlier_detection(data, index_col)
   write.csv(data, file.path(output_dir, "full_data_with_out.csv"), row.names = FALSE)
   cat("\033[1;32m==== Outlier detection completed, moving on... ====\033[0m\n")
+  print(names(data))
   #######
   perform_multi_reg_all <- readline(prompt = "Would you like to run multi_reg on all groups present in the index column? (yes/no): ")
   if (tolower(perform_multi_reg_all) == "yes") {
@@ -1498,7 +1511,7 @@ perform_statistical_analysis <- function() {
     }, error = function(e) {
       message("Error in plotting bootstrap CI: ", e$message)
     })
-    
+ 
     #save statistical test results
     if (nrow(test_results) > 0) {
       test_results_path <- file.path(stat_test_dir, "statistical_test_results.csv")
@@ -1520,7 +1533,7 @@ perform_statistical_analysis <- function() {
     cat("\033[1;32m==== 2 group statistical test, FDR, and p value hostograms completed, moving on.... ====\033[0m\n")
     summary_dir <- file.path(sub_data_dir, "stat_summary")
     dir.create(summary_dir, showWarnings = FALSE)
-    
+
     #summarize DF 
     summarize_dataframe <- function(df, index_col) {
       # Validate input data
@@ -1617,7 +1630,7 @@ perform_statistical_analysis <- function() {
     #save summary DF
     summary_df_path <- file.path(summary_dir, "summary_data.csv")
     tryCatch({
-      write.csv(summary_df, summary_df_path, row.names = TRUE)
+      write.csv(summary_df, summary_df_path, row.names = FALSE)
       message("Summary data saved successfully at ", summary_df_path)
     }, error = function(e) {
       message("Failed to save summary data: ", e$message)
@@ -1690,7 +1703,7 @@ perform_statistical_analysis <- function() {
         res <- pwr.t2n.test(n1 = n1, n2 = n2, d = d, sig.level = sig.level, alternative = "two.sided")
         res$power
       })
-      
+
       power_vals <- power_vals[!is.na(power_vals)]
       ci <- quantile(power_vals, c(0.025, 0.975))
       return(ci)
@@ -1700,11 +1713,11 @@ perform_statistical_analysis <- function() {
         n1 <- as.numeric(readline(prompt="Enter the value for n1: "))
         n2 <- as.numeric(readline(prompt="Enter the value for n2: "))
         sig.level <- as.numeric(readline(prompt="Enter the significance level (e.g., 0.05): "))
-        
+
         df <- df %>% distinct(column_name, .keep_all = TRUE)
         
         power_vals <- rep(NA, nrow(df))
-        
+
         for (i in 1:nrow(df)) {
           feature_name <- df$column_name[i]
           d <- df$calculated_effect_size[i]  # the previously computed effect size
@@ -1728,7 +1741,7 @@ perform_statistical_analysis <- function() {
         return(df)  
       })
     }
-    
+
     summary_df_with_power <- add_power_to_df(summary_df)
     final_summary <- summary_df_with_power %>%
       dplyr::select(column_name, power, Power_CI_lower, Power_CI_upper)
@@ -1749,7 +1762,7 @@ perform_statistical_analysis <- function() {
     
     #save summary data frame with power calculations
     summary_df_with_power_path <- file.path(summary_dir, "power_data.csv")
-    write.csv(as.data.frame(final_summary), summary_df_with_power_path, row.names = FALSE)
+    write.csv(as.data.frame(final_summary), summary_df_with_power_path)
     cat("\033[1;32m==== power analysis completed and saved, moving on.... ====\033[0m\n")
     bayes_dir <- file.path(sub_data_dir, "stat_bayes")
     dir.create(bayes_dir, showWarnings = FALSE)
